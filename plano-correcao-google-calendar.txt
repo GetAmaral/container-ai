@@ -1,0 +1,280 @@
+PLANO DE CORREÇÃO — GOOGLE CALENDAR SYNC
+══════════════════════════════════════════
+Versão: 1.0
+Data: 19/02/2026
+
+CONTEXTO INVESTIGADO:
+- 5 edge functions lidas por completo
+- 10 RPCs do Postgres analisadas (incluindo encrypt_token e decrypt_token)
+- Estrutura das tabelas google_calendar_connections e calendar
+- Índices e constraints verificados
+- Workflow n8n de criação de eventos analisado
+- Chave de criptografia: google_calendar_secret_key_2024 (pgp_sym_encrypt AES-256)
+- Unique constraint confirmado: unique_google_event_per_user (session_event_id_google, user_id)
+
+══════════════════════════════════════════
+GARANTIAS DE SEGURANÇA (regras invioláveis)
+══════════════════════════════════════════
+
+1. ISOLAMENTO POR USER_ID
+   - Toda query ao banco SEMPRE filtra por user_id
+   - Toda chamada à Google API usa o token DO PRÓPRIO usuário
+   - O token é obtido via RPC secure_get_google_tokens(p_user_id) que valida o user
+   - A tabela google_calendar_connections tem UNIQUE(user_id) — 1 conexão por user
+   - A tabela calendar tem unique_google_event_per_user(session_event_id_google, user_id)
+   - NENHUMA alteração neste plano remove ou enfraquece esses filtros
+
+2. CRIPTOGRAFIA
+   - Tokens são criptografados com pgp_sym_encrypt(AES-256) via RPCs no Postgres
+   - A chave google_calendar_secret_key_2024 NUNCA sai do banco
+   - Toda escrita de token usa store_google_connection ou store_access_token (RPCs)
+   - Toda leitura de token usa secure_get_google_tokens (RPC com rate limiting)
+   - NENHUMA alteração grava token em plaintext
+
+3. ANTI-TRAVAMENTO
+   - Toda chamada HTTP (Google API) tem timeout explícito
+   - Sync processa 1 user por vez (sem Promise.all descontrolado)
+   - Erros são capturados por user e não derrubam o batch
+
+══════════════════════════════════════════
+FASE 1 — WEBHOOK (CRÍTICO, sync real-time)
+══════════════════════════════════════════
+
+ARQUIVO: google-calendar-webhook
+PROBLEMA: Não renova access_token expirado. Token expira em 1h.
+           Após 1h, toda notificação do Google falha silenciosamente.
+
+CORREÇÃO:
+  Extrair a função getValidAccessToken() da edge function google-calendar
+  (que já funciona corretamente) e usá-la no webhook.
+
+  Especificamente, no webhook, ANTES de chamar a Google Calendar API:
+  1. Chamar RPC secure_get_google_tokens(user_id)
+  2. Checar se expires_at < now()
+  3. Se expirado: POST https://oauth2.googleapis.com/token com refresh_token
+  4. Gravar novo token via RPC store_access_token(user_id, novo_token, novo_expires_at)
+  5. Usar o token válido para a chamada à API
+
+O QUE NÃO MUDA:
+  - Lógica de processEventChange (insert/update/delete)
+  - Paginação (já funciona nessa function)
+  - Validação de webhook headers (channelId + resourceId)
+  - Isolamento por user (lookup via webhook_id → user_id)
+
+TESTE:
+  - Conectar Google Calendar
+  - Esperar >1h (ou forçar expires_at no passado no banco)
+  - Criar evento no Google Calendar
+  - Verificar se o webhook recebe, renova token e sincroniza
+
+══════════════════════════════════════════
+FASE 2 — DESATIVAR calendar-sync-pull
+══════════════════════════════════════════
+
+ARQUIVO: calendar-sync-pull
+PROBLEMA: 3 bugs críticos simultâneos:
+  a) Refresh envia JSON onde Google espera form-urlencoded → sempre falha
+  b) Grava token plaintext em coluna encriptada → corrompe dados
+  c) Sem paginação, sem sync token, só eventos futuros
+
+DECISÃO: DESATIVAR, NÃO CORRIGIR.
+  Esta function é redundante. O cron (google-calendar-sync-cron)
+  já faz o mesmo trabalho de forma mais robusta via a function principal.
+
+CORREÇÃO:
+  Substituir o body inteiro por um retorno simples:
+
+  return new Response(JSON.stringify({
+    status: "deprecated",
+    message: "Use google-calendar-sync-cron instead"
+  }), { status: 200 });
+
+O QUE NÃO MUDA:
+  - Nenhuma outra function depende desta
+  - O cron (sync-cron) continua operando normalmente
+  - Nenhum dado é afetado
+
+TESTE:
+  - Chamar a function e confirmar retorno "deprecated"
+  - Verificar que o cron continua funcionando
+
+══════════════════════════════════════════
+FASE 3 — WA-CONNECT (pós-conexão incompleta)
+══════════════════════════════════════════
+
+ARQUIVO: google-calendar-wa-connect
+PROBLEMA: Após OAuth callback, não dispara sync inicial nem configura webhook.
+           Usuários conectados via WhatsApp ficam sem eventos até o cron rodar.
+
+CORREÇÃO:
+  No action=callback, APÓS armazenar os tokens com sucesso:
+  1. Chamar google-calendar com action=cron-sync + renewWebhook=true
+     via supabase.functions.invoke() (mesmo padrão do sync-cron)
+  2. Isso dispara: sync inicial + setup de webhook, tudo pela function principal
+
+  Código a adicionar (após o store_google_connection):
+
+  EdgeRuntime.waitUntil((async () => {
+    try {
+      await supabaseAdmin.functions.invoke('google-calendar', {
+        body: { action: 'cron-sync', userId: userId, renewWebhook: true },
+        headers: { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}` }
+      });
+    } catch (e) {
+      console.error('Post-connect sync failed:', e);
+    }
+  })());
+
+O QUE NÃO MUDA:
+  - Fluxo OAuth (redirect, callback, token exchange)
+  - Armazenamento criptografado dos tokens
+  - Redirect final pro WhatsApp
+  - Nenhum token é exposto
+
+TESTE:
+  - Desconectar Google de um user de teste
+  - Reconectar via WhatsApp flow
+  - Verificar se eventos aparecem no banco após callback
+  - Verificar se webhook_id foi preenchido na tabela
+
+══════════════════════════════════════════
+FASE 4 — PAGINAÇÃO no sync incremental (function principal)
+══════════════════════════════════════════
+
+ARQUIVO: google-calendar (função performIncrementalSync)
+PROBLEMA: Não checa nextPageToken. Se >250 eventos mudaram, perde dados.
+
+CORREÇÃO:
+  Adicionar loop de paginação, igual ao que já existe no webhook.
+
+  Trocar a chamada única por um do...while:
+
+  let pageToken = undefined;
+  let allEvents = [];
+  do {
+    const params = new URLSearchParams({ ... });
+    if (pageToken) params.set('pageToken', pageToken);
+    const resp = await fetch(url + '?' + params, { headers });
+    const data = await resp.json();
+    allEvents.push(...(data.items || []));
+    pageToken = data.nextPageToken;
+    if (data.nextSyncToken) { /* salvar sync token */ }
+  } while (pageToken);
+
+O QUE NÃO MUDA:
+  - processEventChange (mesma lógica de insert/update/delete)
+  - Armazenamento do sync token
+  - Rate limiting
+  - Isolamento por user
+
+TESTE:
+  - Criar >250 eventos no Google Calendar de teste
+  - Forçar sync
+  - Verificar se todos aparecem no banco
+
+══════════════════════════════════════════
+FASE 5 — EVENTOS DE DIA INTEIRO
+══════════════════════════════════════════
+
+ARQUIVOS: google-calendar, google-calendar-webhook
+PROBLEMA: Eventos all-day (que usam .date ao invés de .dateTime) são ignorados.
+
+CORREÇÃO:
+  Na função que processa eventos (performInitialSync, performIncrementalSync,
+  processEventChange), ao invés de pular eventos sem dateTime:
+
+  // ANTES:
+  if (!gEvent.start?.dateTime || !gEvent.end?.dateTime) continue;
+
+  // DEPOIS:
+  const startDt = gEvent.start?.dateTime || (gEvent.start?.date ? gEvent.start.date + 'T00:00:00-03:00' : null);
+  const endDt = gEvent.end?.dateTime || (gEvent.end?.date ? gEvent.end.date + 'T23:59:59-03:00' : null);
+  if (!startDt || !endDt) continue;
+
+  Isso converte all-day events para timestamps com horário 00:00-23:59
+  no fuso America/Sao_Paulo.
+
+O QUE NÃO MUDA:
+  - Formato de dados no banco (continua timestamptz)
+  - Lógica de deduplicação via session_event_id_google
+  - Isolamento por user
+
+TESTE:
+  - Criar evento de dia inteiro no Google
+  - Forçar sync
+  - Verificar se aparece no banco com horários 00:00 e 23:59
+
+══════════════════════════════════════════
+FASE 6 — CONNECTED_EMAIL nulo (function principal)
+══════════════════════════════════════════
+
+ARQUIVO: google-calendar (OAuth callback)
+PROBLEMA: O callback tenta pegar email de tokenData.email, mas o Google
+           não retorna email no token exchange. Fica sempre null.
+
+CORREÇÃO:
+  Após o token exchange, fazer uma chamada extra ao userinfo:
+
+  const userinfoResp = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+    headers: { Authorization: `Bearer ${tokenData.access_token}` }
+  });
+  const userinfo = await userinfoResp.json();
+  const connectedEmail = userinfo.email || null;
+
+  E passar connectedEmail para store_google_connection.
+
+  NOTA: A function wa-connect JÁ faz isso corretamente (linha ~160).
+  Basta replicar o mesmo padrão.
+
+O QUE NÃO MUDA:
+  - Fluxo OAuth
+  - Armazenamento de tokens
+  - Nada de segurança
+
+TESTE:
+  - Reconectar Google Calendar
+  - Verificar se connected_email está preenchido na tabela
+
+══════════════════════════════════════════
+ORDEM DE EXECUÇÃO
+══════════════════════════════════════════
+
+  FASE 1 → webhook (mais urgente, sync real-time quebrado)
+  FASE 2 → desativar calendar-sync-pull (evitar corrupção de dados)
+  FASE 3 → wa-connect pós-conexão
+  FASE 4 → paginação incremental
+  FASE 5 → eventos all-day
+  FASE 6 → connected_email
+
+Cada fase é independente. Deploy uma por vez. Testar após cada deploy.
+
+══════════════════════════════════════════
+O QUE NÃO SERÁ ALTERADO
+══════════════════════════════════════════
+
+- RPCs do Postgres (encrypt_token, decrypt_token, store_google_connection, etc.)
+- Chave de criptografia
+- Tabelas (schema)
+- Índices e constraints
+- Credenciais OAuth do Google (client_id, client_secret)
+- Workflow n8n de criação de eventos
+- google-calendar-sync-cron (orquestrador — funciona corretamente)
+
+══════════════════════════════════════════
+RISCOS E MITIGAÇÕES
+══════════════════════════════════════════
+
+RISCO: Deploy de edge function com erro de sintaxe
+MITIGAÇÃO: Validar TypeScript antes do deploy. A Management API retorna
+           erro se o código não compilar.
+
+RISCO: Token refresh falhar (Google revogou refresh_token)
+MITIGAÇÃO: Se refresh falha, marcar is_connected=false e notificar user
+           para reconectar. Já existe log_failed_token_access para isso.
+
+RISCO: Race condition entre webhook e cron sincronizando mesmo user
+MITIGAÇÃO: O unique constraint unique_google_event_per_user impede duplicatas.
+           Updates concorrentes no mesmo evento convergem para o mesmo estado.
+
+RISCO: Webhook do Google expirar
+MITIGAÇÃO: O cron já renova webhooks com <24h para expirar. Não mexer nisso.
