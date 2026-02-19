@@ -1,0 +1,58 @@
+FASE 4 — PAGINACAO NO SYNC INCREMENTAL (function principal)
+============================================================
+
+PROBLEMA:
+A funcao performIncrementalSync faz UMA chamada a API do Google
+com maxResults=250. Se >250 eventos mudaram, perde o resto.
+
+CORRECAO:
+Trocada a chamada unica por um loop do...while com nextPageToken.
+Igual ao que ja funciona no webhook (Fase 1).
+
+O QUE MUDOU:
+  - performIncrementalSync agora tem loop de paginacao
+  - Busca todas as paginas ate acabar (nextPageToken)
+  - newSyncToken so e salvo no final (da ultima pagina)
+
+O QUE NAO MUDOU (NADA MAIS):
+  - serve() handler (OAuth, auth, API JSON)
+  - handleCallback, handleAuth, handleCreateEvent
+  - handleUpdateEvent, handleDeleteEvent, handleDisconnect
+  - handleSyncFromGoogle, performInitialSync
+  - setupGoogleWebhook, cancelGoogleWebhook, handleCronSync
+  - getValidAccessToken, refreshAccessToken
+  - processEventChange
+  - parseState, createState, getOriginUrl
+  - Isolamento por user_id
+  - Criptografia de tokens
+
+============================================================
+PASSO A PASSO
+============================================================
+
+PASSO 1: Supabase Dashboard > Edge Functions > google-calendar
+
+PASSO 2: Editar o codigo
+  - Ctrl+A, Delete (apaga tudo)
+  - Copie o conteudo de fase4-google-calendar.ts do GitHub
+  - Cole (Ctrl+V)
+  - Deploy
+
+PASSO 3: Verificar que ficou ACTIVE
+
+============================================================
+COMO TESTAR
+============================================================
+
+1. No Google Calendar de um user de teste, crie 3-4 eventos
+2. No Supabase, chame a function manualmente:
+   POST /functions/v1/google-calendar
+   Body: { "action": "cron-sync", "userId": "UUID_DO_USER" }
+   Header: Authorization: Bearer SERVICE_ROLE_KEY
+3. Verifique nos logs:
+   "Processing X changed events"
+   "Incremental sync completed"
+4. Verifique na tabela calendar se os eventos apareceram
+
+============================================================
+PROXIMO: me avise para as Fases 5 e 6
