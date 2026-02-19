@@ -1,0 +1,32 @@
+FASE 2 — DESATIVAR calendar-sync-pull
+======================================
+
+PROBLEMA:
+Esta function tem 3 bugs criticos simultaneos:
+  a) Refresh envia JSON onde Google espera form-urlencoded (sempre falha)
+  b) Grava token plaintext em coluna encriptada (corrompe dados)
+  c) Sem paginacao, sem sync token, so eventos futuros
+
+DECISAO: DESATIVAR (nao corrigir).
+O cron (google-calendar-sync-cron) ja faz o mesmo trabalho
+de forma correta pela function principal. Esta function e redundante.
+
+======================================
+PASSO A PASSO
+======================================
+
+PASSO 1: Supabase Dashboard > Edge Functions > calendar-sync-pull
+
+PASSO 2: Editar o codigo
+  - Ctrl+A, Delete (apaga tudo)
+  - Copie o conteudo de fase2-calendar-sync-pull.ts do GitHub
+  - Cole (Ctrl+V)
+  - Deploy
+
+PASSO 3: Verificar que ficou ACTIVE
+
+Pronto. Sao 10 linhas. Qualquer chamada retorna:
+{ "status": "deprecated", "message": "Use google-calendar-sync-cron instead" }
+
+======================================
+PROXIMO: me avise para a Fase 3
