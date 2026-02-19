@@ -1,0 +1,171 @@
+================================================================================
+FIX: EVENTOS RECORRENTES NAO APARECEM EM TODOS OS DIAS
+================================================================================
+Data: 2026-02-19
+Problema: Evento recorrente so aparece no dia da primeira ocorrencia.
+Causa: A tabela "calendar" guarda 1 unica linha por evento recorrente
+       (com start_event = data da 1a ocorrencia). A busca filtra por
+       start_event dentro do range, entao so encontra a 1a ocorrencia.
+Solucao: Expandir a RRULE na hora da busca (virtual expansion).
+
+================================================================================
+RESUMO DA MUDANCA
+================================================================================
+Voce vai modificar APENAS o fluxo de BUSCA de eventos (busca-total-evento).
+Nada muda na criacao, edicao ou exclusao de eventos recorrentes.
+
+O Google Calendar ja lida com RRULE nativamente, entao la nao tem problema.
+O problema e so na busca local do Supabase.
+
+================================================================================
+PASSO 1 - ABRIR O FLUXO "busca-total-evento"
+================================================================================
+No n8n, abra o workflow que responde ao webhook:
+  https://totalassistente.com.br/webhook/busca-total-evento
+
+Esse fluxo recebe:
+  - nome_evento (string)
+  - descricao_evento (string)
+  - data_inicio_evento (string, ex: "2026-02-19 00:00:00-03")
+  - data_fim_evento (string, ex: "2026-02-19 23:59:59-03")
+  - user_id (string)
+
+================================================================================
+PASSO 2 - SEPARAR A QUERY EXISTENTE EM DUAS
+================================================================================
+Atualmente voce provavelmente tem UMA query que busca eventos no range.
+Voce vai precisar de DUAS queries rodando em PARALELO:
+
+  QUERY A - Eventos normais (nao-recorrentes) no range:
+  -------------------------------------------------------
+  GET /rest/v1/calendar
+    ?user_id=eq.{user_id}
+    &is_recurring=is.false
+    &active=is.true
+    &start_event=gte.{data_inicio_evento}
+    &start_event=lte.{data_fim_evento}
+    &select=*
+    &order=start_event.asc
+
+  Se voce tambem filtra por nome/descricao, mantenha esses filtros aqui.
+
+  QUERY B - Todos os eventos recorrentes ativos do usuario:
+  ---------------------------------------------------------
+  GET /rest/v1/calendar
+    ?user_id=eq.{user_id}
+    &is_recurring=is.true
+    &active=is.true
+    &select=*
+
+  IMPORTANTE: Essa query NAO filtra por data!
+  Ela busca TODOS os recorrentes ativos do usuario, porque a RRULE
+  determina quando o evento acontece, nao o start_event.
+
+  Se o usuario buscou por nome (ex: "dentista"), voce pode adicionar
+  o filtro de nome aqui tambem:
+    &event_name=ilike.*dentista*
+
+Como fazer isso no n8n:
+  - Use dois nodes HTTP Request em paralelo (saindo do mesmo node anterior).
+  - Ou use um node Supabase + um HTTP Request.
+  - O importante e que as duas queries rodem e os resultados cheguem
+    no proximo node (Code).
+
+================================================================================
+PASSO 3 - ADICIONAR O CODE NODE "Expandir Recorrentes"
+================================================================================
+Depois das duas queries, adicione um node "Code" (JavaScript).
+
+Cole o codigo do arquivo: fix-recurring-code-expander.txt
+
+Esse codigo:
+  1. Pega os eventos normais (Query A)
+  2. Pega os eventos recorrentes (Query B)
+  3. Para cada recorrente, parseia a RRULE e gera ocorrencias virtuais
+     dentro do range de busca
+  4. Junta tudo, remove duplicatas, ordena por start_event
+  5. Retorna o array final
+
+================================================================================
+PASSO 4 - CONECTAR O CODE NODE A SAIDA DO FLUXO
+================================================================================
+O Code node substitui a saida antiga. Conecte a saida dele onde antes
+ia a saida da query unica.
+
+Fluxo final:
+
+  [Webhook] --> [Set campos] --> [Query A: normais no range]  --|
+                              --> [Query B: recorrentes ativos] --|
+                                                                  v
+                                                        [Code: Expandir]
+                                                                  |
+                                                                  v
+                                                        [Respond to Webhook]
+
+================================================================================
+PASSO 5 - CONFIGURAR AS REFERENCIAS NO CODE NODE
+================================================================================
+No Code node, voce precisa ajustar os nomes dos nodes de referencia.
+
+Dentro do codigo, procure por:
+  const INPUT_RANGE_NODE = 'Set_campos';
+  const NORMAL_EVENTS_NODE = 'Query_normais';
+  const RECURRING_EVENTS_NODE = 'Query_recorrentes';
+
+Troque pelos nomes reais dos seus nodes no n8n:
+  - INPUT_RANGE_NODE = nome do node que tem data_inicio_evento e data_fim_evento
+  - NORMAL_EVENTS_NODE = nome do node da Query A
+  - RECURRING_EVENTS_NODE = nome do node da Query B
+
+================================================================================
+PASSO 6 - TESTAR
+================================================================================
+Teste com o seguinte cenario:
+
+  1. Crie um evento recorrente: "Dentista toda quinta 16:20"
+     (RRULE: FREQ=WEEKLY;BYDAY=TH;BYHOUR=16;BYMINUTE=20;BYSECOND=0)
+     (dtstart: 2026-02-19T16:20:00-03:00)
+
+  2. Busque a agenda de HOJE (quinta 19/02) --> deve aparecer "Dentista 16:20"
+
+  3. Busque a agenda de PROXIMA QUINTA (26/02) --> AGORA deve aparecer
+     "Dentista 16:20" tambem! (antes nao aparecia)
+
+  4. Busque "agenda da semana" --> deve aparecer em toda quinta
+
+  5. Busque "agenda do mes" --> deve aparecer em todas as quintas de fevereiro
+
+================================================================================
+PASSO 7 - FILTRO POR NOME EM RECORRENTES (OPCIONAL MAS RECOMENDADO)
+================================================================================
+Se o usuario busca por nome (ex: "dentista"), voce pode filtrar
+os recorrentes tambem. No Code node, ja existe logica para isso:
+ele filtra pelo nome se o campo nome_evento vier preenchido.
+
+================================================================================
+NOTAS IMPORTANTES
+================================================================================
+
+1. PERFORMANCE: A Query B busca TODOS os recorrentes do usuario.
+   Se um usuario tiver muitos (centenas), pode ficar lento.
+   Solucao futura: adicionar filtro por active=true AND
+   (repeats_until IS NULL OR repeats_until >= data_inicio_buscado).
+
+2. O QUE NAO MUDA:
+   - Criacao de eventos recorrentes (mesmo fluxo)
+   - Edicao de eventos
+   - Exclusao de eventos
+   - Google Calendar (ja lida com RRULE nativamente)
+   - Tabela calendar (mesma estrutura)
+   - Notificacoes/lembretes (se usam next_fire_at, continuam igual)
+
+3. EVENTOS RECORRENTES NO GOOGLE: Quando o usuario tem conexao Google,
+   o evento recorrente e criado no Google Calendar com o campo
+   "recurrence" (que contem a RRULE). O Google ja expande nativamente.
+   O problema era so na busca local do Supabase.
+
+4. EXDATES: O codigo respeita o campo exdates da tabela calendar.
+   Datas excluidas nao geram ocorrencias virtuais.
+
+5. UNTIL/COUNT: O codigo respeita UNTIL (na RRULE ou no campo
+   repeats_until da tabela) e COUNT.

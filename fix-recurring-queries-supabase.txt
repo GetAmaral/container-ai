@@ -1,0 +1,195 @@
+================================================================================
+QUERIES SUPABASE PARA O FIX DE EVENTOS RECORRENTES
+================================================================================
+
+Estas queries sao usadas nos nodes HTTP Request do n8n,
+dentro do fluxo "busca-total-evento".
+
+================================================================================
+QUERY A - EVENTOS NORMAIS (NAO-RECORRENTES) NO RANGE
+================================================================================
+
+Endpoint: GET https://{SEU_SUPABASE_URL}/rest/v1/calendar
+
+Query Parameters:
+  user_id       = eq.{user_id}
+  is_recurring  = is.false
+  active        = is.true
+  start_event   = gte.{data_inicio_evento}
+  start_event   = lte.{data_fim_evento}
+  select        = *
+  order         = start_event.asc
+
+Headers:
+  apikey: {sua_api_key}
+  Authorization: Bearer {sua_api_key}
+
+No n8n (HTTP Request node):
+  Method: GET
+  URL: https://ldbdtakddxznfridsarn.supabase.co/rest/v1/calendar
+  Authentication: Predefined Credential (supabaseApi)
+  Send Query Parameters: ON
+
+  Parameters:
+    user_id       = eq.{{ $json.user_id }}
+    is_recurring  = is.false
+    active        = is.true
+    start_event   = gte.{{ $json.data_inicio_evento }}
+    start_event   = lte.{{ $json.data_fim_evento }}
+    select        = *
+    order         = start_event.asc
+
+  NOTA: Se voce tambem filtra por nome/descricao na busca atual,
+  adicione esses filtros aqui tambem:
+    event_name    = ilike.*{{ $json.nome_evento }}*     (se nome_evento nao for vazio)
+    desc_event    = ilike.*{{ $json.descricao_evento }}* (se descricao_evento nao for vazio)
+
+
+================================================================================
+QUERY B - EVENTOS RECORRENTES ATIVOS DO USUARIO
+================================================================================
+
+Endpoint: GET https://{SEU_SUPABASE_URL}/rest/v1/calendar
+
+Query Parameters:
+  user_id       = eq.{user_id}
+  is_recurring  = is.true
+  active        = is.true
+  select        = *
+
+Headers:
+  apikey: {sua_api_key}
+  Authorization: Bearer {sua_api_key}
+
+No n8n (HTTP Request node):
+  Method: GET
+  URL: https://ldbdtakddxznfridsarn.supabase.co/rest/v1/calendar
+  Authentication: Predefined Credential (supabaseApi)
+  Send Query Parameters: ON
+
+  Parameters:
+    user_id       = eq.{{ $json.user_id }}
+    is_recurring  = is.true
+    active        = is.true
+    select        = *
+
+  IMPORTANTE: NAO filtre por data aqui!
+  A RRULE determina quando o evento cai, nao o start_event.
+
+  OPCIONAL (filtro por nome, se o usuario buscou por nome):
+    event_name    = ilike.*{{ $json.nome_evento }}*     (se nome_evento nao for vazio)
+
+
+================================================================================
+ALTERNATIVA: QUERY UNICA COM RPC (FUNCAO SUPABASE)
+================================================================================
+
+Se preferir, voce pode criar uma funcao no Supabase que retorna
+os dois conjuntos de uma vez. Isso simplifica o fluxo no n8n.
+
+-- Criar essa funcao no SQL Editor do Supabase:
+
+CREATE OR REPLACE FUNCTION public.buscar_eventos_com_recorrentes(
+  p_user_id UUID,
+  p_start TIMESTAMPTZ,
+  p_end TIMESTAMPTZ,
+  p_nome TEXT DEFAULT '',
+  p_descricao TEXT DEFAULT ''
+)
+RETURNS TABLE (
+  id UUID,
+  event_name TEXT,
+  desc_event TEXT,
+  start_event TIMESTAMPTZ,
+  end_event TIMESTAMPTZ,
+  reminder BOOLEAN,
+  remembered BOOLEAN,
+  user_id UUID,
+  connect_google BOOLEAN,
+  session_event_id_google TEXT,
+  calendar_email_created TEXT,
+  is_recurring BOOLEAN,
+  rrule TEXT,
+  timezone TEXT,
+  repeats_until TIMESTAMPTZ,
+  exdates TIMESTAMPTZ[],
+  channel TEXT,
+  active BOOLEAN,
+  _source TEXT  -- 'normal' ou 'recurring' para diferenciar
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  -- Eventos normais no range
+  RETURN QUERY
+  SELECT
+    c.id, c.event_name, c.desc_event, c.start_event, c.end_event,
+    c.reminder, c.remembered, c.user_id, c.connect_google,
+    c.session_event_id_google, c.calendar_email_created,
+    c.is_recurring, c.rrule, c.timezone, c.repeats_until,
+    c.exdates, c.channel, c.active,
+    'normal'::TEXT AS _source
+  FROM public.calendar c
+  WHERE c.user_id = p_user_id
+    AND c.active = TRUE
+    AND c.is_recurring = FALSE
+    AND c.start_event >= p_start
+    AND c.start_event <= p_end
+    AND (p_nome = '' OR c.event_name ILIKE '%' || p_nome || '%')
+    AND (p_descricao = '' OR c.desc_event ILIKE '%' || p_descricao || '%')
+
+  UNION ALL
+
+  -- Eventos recorrentes ativos (para expansao no client)
+  SELECT
+    c.id, c.event_name, c.desc_event, c.start_event, c.end_event,
+    c.reminder, c.remembered, c.user_id, c.connect_google,
+    c.session_event_id_google, c.calendar_email_created,
+    c.is_recurring, c.rrule, c.timezone, c.repeats_until,
+    c.exdates, c.channel, c.active,
+    'recurring'::TEXT AS _source
+  FROM public.calendar c
+  WHERE c.user_id = p_user_id
+    AND c.active = TRUE
+    AND c.is_recurring = TRUE
+    AND (p_nome = '' OR c.event_name ILIKE '%' || p_nome || '%')
+    AND (c.repeats_until IS NULL OR c.repeats_until >= p_start)
+
+  ORDER BY start_event ASC;
+END;
+$$;
+
+-- Para chamar no n8n via HTTP Request (RPC):
+-- POST https://ldbdtakddxznfridsarn.supabase.co/rest/v1/rpc/buscar_eventos_com_recorrentes
+-- Body:
+-- {
+--   "p_user_id": "6d647cd8-...",
+--   "p_start": "2026-02-19T00:00:00-03:00",
+--   "p_end": "2026-02-19T23:59:59-03:00",
+--   "p_nome": "",
+--   "p_descricao": ""
+-- }
+--
+-- Depois no Code node, separe os resultados:
+--   normais = results.filter(r => r._source === 'normal')
+--   recorrentes = results.filter(r => r._source === 'recurring')
+--   E aplique o expander nos recorrentes.
+
+
+================================================================================
+NOTA SOBRE PERFORMANCE
+================================================================================
+
+A Query B busca TODOS os recorrentes ativos. Para evitar problemas
+com muitos eventos recorrentes no futuro, considere adicionar:
+
+  AND (repeats_until IS NULL OR repeats_until >= {{ $json.data_inicio_evento }})
+
+Isso exclui eventos recorrentes que ja terminaram antes do range buscado.
+
+Indice recomendado (ja existe parcialmente na tabela):
+
+  CREATE INDEX IF NOT EXISTS idx_calendar_recurring_active_user
+  ON public.calendar (user_id, is_recurring, active)
+  WHERE is_recurring = TRUE AND active = TRUE;

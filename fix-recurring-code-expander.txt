@@ -1,0 +1,389 @@
+// ================================================================================
+// FIX: EXPANDIR EVENTOS RECORRENTES NA BUSCA
+// ================================================================================
+// Este codigo vai em um Code node do n8n, DEPOIS das duas queries:
+//   - Query A: eventos normais (nao-recorrentes) no range
+//   - Query B: todos os eventos recorrentes ativos do usuario
+//
+// Ele expande as RRULEs dos eventos recorrentes, gera ocorrencias
+// virtuais dentro do range de busca, e junta com os eventos normais.
+// ================================================================================
+
+// ─── CONFIGURACAO: AJUSTE OS NOMES DOS NODES ───
+// Troque pelos nomes reais dos seus nodes no n8n:
+const INPUT_RANGE_NODE = 'Set_campos';         // Node que tem data_inicio_evento / data_fim_evento / nome_evento
+const NORMAL_EVENTS_NODE = 'Query_normais';    // Node da Query A (eventos normais no range)
+const RECURRING_EVENTS_NODE = 'Query_recorrentes'; // Node da Query B (recorrentes ativos)
+
+// ─── PEGAR INPUTS ───
+const inputData = $node[INPUT_RANGE_NODE].json || {};
+const rangeStartStr = inputData.data_inicio_evento || '';
+const rangeEndStr = inputData.data_fim_evento || '';
+const filterName = (inputData.nome_evento || '').trim().toLowerCase();
+const filterDesc = (inputData.descricao_evento || '').trim().toLowerCase();
+
+// Se nao tem range de data, retornar so os normais
+if (!rangeStartStr || !rangeEndStr) {
+  const normalItems = $items(NORMAL_EVENTS_NODE) || [];
+  return normalItems;
+}
+
+const rangeStart = new Date(rangeStartStr.replace(' ', 'T').replace(/-(\d{2})$/, '-$1:00'));
+const rangeEnd = new Date(rangeEndStr.replace(' ', 'T').replace(/-(\d{2})$/, '-$1:00'));
+
+// ─── EVENTOS NORMAIS (Query A) ───
+const normalItems = ($items(NORMAL_EVENTS_NODE) || []).map(item => item.json);
+
+// ─── EVENTOS RECORRENTES (Query B) ───
+let recurringItems = ($items(RECURRING_EVENTS_NODE) || []).map(item => item.json);
+
+// Filtrar por nome se o usuario buscou por nome
+if (filterName) {
+  recurringItems = recurringItems.filter(evt => {
+    const name = (evt.event_name || '').toLowerCase();
+    return name.includes(filterName);
+  });
+}
+if (filterDesc) {
+  recurringItems = recurringItems.filter(evt => {
+    const desc = (evt.desc_event || '').toLowerCase();
+    return desc.includes(filterDesc);
+  });
+}
+
+// ─── FUNCOES DE PARSE DE RRULE ───
+
+function parseRRule(rruleStr) {
+  if (!rruleStr) return {};
+  const str = rruleStr.replace(/^RRULE:/i, '').trim();
+  const parts = {};
+  for (const pair of str.split(';')) {
+    const eqIdx = pair.indexOf('=');
+    if (eqIdx === -1) continue;
+    const key = pair.substring(0, eqIdx).toUpperCase().trim();
+    const val = pair.substring(eqIdx + 1).trim();
+    if (key && val) parts[key] = val;
+  }
+  return parts;
+}
+
+function parseRRuleDate(str) {
+  if (!str) return null;
+  const m = str.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})/);
+  if (!m) return new Date(str);
+  const iso = `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}`;
+  return str.endsWith('Z') ? new Date(iso + 'Z') : new Date(iso + '-03:00');
+}
+
+// ─── MAPA DE DIAS DA SEMANA ───
+const DAY_MAP = { MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6, SU: 0 };
+
+// ─── HELPERS ───
+
+function toLocalDateStr(d) {
+  // YYYY-MM-DD para comparacao com exdates
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function addDays(d, n) {
+  const r = new Date(d.getTime());
+  r.setDate(r.getDate() + n);
+  return r;
+}
+
+function addMonths(d, n) {
+  const r = new Date(d.getTime());
+  r.setMonth(r.getMonth() + n);
+  return r;
+}
+
+function setTime(d, h, m, s) {
+  d.setHours(h, m, s, 0);
+}
+
+function getWeekdayInWeek(weekStart, targetDay) {
+  // Dado o inicio de uma semana, retorna o dia "targetDay" (0=DOM..6=SAB) nessa semana
+  const d = new Date(weekStart.getTime());
+  const currentDay = d.getDay();
+  const diff = (targetDay - currentDay + 7) % 7;
+  d.setDate(d.getDate() + diff);
+  return d;
+}
+
+function getMonday(d) {
+  // Retorna a segunda-feira da semana de "d"
+  const r = new Date(d.getTime());
+  const day = r.getDay();
+  const diff = day === 0 ? -6 : 1 - day; // Se domingo, volta 6 dias
+  r.setDate(r.getDate() + diff);
+  r.setHours(0, 0, 0, 0);
+  return r;
+}
+
+// ─── FUNCAO PRINCIPAL: GERAR OCORRENCIAS ───
+
+function generateOccurrences(rrule, dtstart, searchStart, searchEnd, exdatesSet, maxOccurrences) {
+  const freq = (rrule.FREQ || '').toUpperCase();
+  const interval = parseInt(rrule.INTERVAL || '1', 10);
+  const count = rrule.COUNT ? parseInt(rrule.COUNT, 10) : null;
+
+  // BYDAY (ex: "MO,WE,FR" ou "TH")
+  const byDay = rrule.BYDAY ? rrule.BYDAY.split(',').map(s => s.trim()) : null;
+  // BYMONTHDAY (ex: "5" ou "1,15")
+  const byMonthDay = rrule.BYMONTHDAY ? rrule.BYMONTHDAY.split(',').map(s => parseInt(s.trim(), 10)) : null;
+  // BYMONTH (ex: "1" ou "6,12")
+  const byMonth = rrule.BYMONTH ? rrule.BYMONTH.split(',').map(s => parseInt(s.trim(), 10)) : null;
+
+  // Horario: BYHOUR/BYMINUTE/BYSECOND ou extrair do dtstart
+  const byHour = rrule.BYHOUR !== undefined ? parseInt(rrule.BYHOUR, 10) : dtstart.getHours();
+  const byMinute = rrule.BYMINUTE !== undefined ? parseInt(rrule.BYMINUTE, 10) : dtstart.getMinutes();
+  const bySecond = rrule.BYSECOND !== undefined ? parseInt(rrule.BYSECOND, 10) : 0;
+
+  // UNTIL
+  let untilDate = null;
+  if (rrule.UNTIL) {
+    untilDate = parseRRuleDate(rrule.UNTIL);
+  }
+
+  // Limite efetivo de busca
+  let effectiveEnd = new Date(searchEnd.getTime());
+  if (untilDate && untilDate < effectiveEnd) {
+    effectiveEnd = untilDate;
+  }
+
+  const results = [];
+  let totalGenerated = 0; // conta desde o dtstart (pra respeitar COUNT)
+
+  // ─── FREQ=DAILY ───
+  if (freq === 'DAILY') {
+    let current = new Date(dtstart.getTime());
+    while (current <= effectiveEnd && results.length < maxOccurrences) {
+      if (count && totalGenerated >= count) break;
+
+      const dateKey = toLocalDateStr(current);
+      if (current >= dtstart) {
+        totalGenerated++;
+        if (current >= searchStart && current <= effectiveEnd && !exdatesSet.has(dateKey)) {
+          const occ = new Date(current.getTime());
+          setTime(occ, byHour, byMinute, bySecond);
+          results.push(occ);
+        }
+      }
+      current = addDays(current, interval);
+    }
+  }
+
+  // ─── FREQ=WEEKLY ───
+  else if (freq === 'WEEKLY') {
+    const targetDays = byDay
+      ? byDay.map(d => DAY_MAP[d.replace(/[^A-Z]/g, '')])
+      : [dtstart.getDay()];
+
+    // Comecar na segunda-feira da semana do dtstart
+    let weekMonday = getMonday(dtstart);
+
+    while (weekMonday <= effectiveEnd && results.length < maxOccurrences) {
+      if (count && totalGenerated >= count) break;
+
+      for (const dayNum of targetDays) {
+        if (count && totalGenerated >= count) break;
+
+        const occ = getWeekdayInWeek(weekMonday, dayNum);
+        setTime(occ, byHour, byMinute, bySecond);
+
+        if (occ >= dtstart) {
+          totalGenerated++;
+          if (occ >= searchStart && occ <= effectiveEnd) {
+            const dateKey = toLocalDateStr(occ);
+            if (!exdatesSet.has(dateKey)) {
+              results.push(new Date(occ.getTime()));
+            }
+          }
+        }
+      }
+
+      // Proxima semana (respeitando intervalo)
+      weekMonday = addDays(weekMonday, 7 * interval);
+    }
+  }
+
+  // ─── FREQ=MONTHLY ───
+  else if (freq === 'MONTHLY') {
+    let currentMonth = new Date(dtstart.getFullYear(), dtstart.getMonth(), 1);
+
+    while (currentMonth <= effectiveEnd && results.length < maxOccurrences) {
+      if (count && totalGenerated >= count) break;
+
+      const days = byMonthDay || [dtstart.getDate()];
+
+      for (const day of days) {
+        if (count && totalGenerated >= count) break;
+
+        // Verificar se o dia existe nesse mes (ex: dia 31 em fev)
+        const lastDayOfMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0).getDate();
+        if (day > lastDayOfMonth) continue;
+
+        const occ = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), day, byHour, byMinute, bySecond);
+
+        if (occ >= dtstart) {
+          totalGenerated++;
+          if (occ >= searchStart && occ <= effectiveEnd) {
+            const dateKey = toLocalDateStr(occ);
+            if (!exdatesSet.has(dateKey)) {
+              results.push(new Date(occ.getTime()));
+            }
+          }
+        }
+      }
+
+      currentMonth = addMonths(currentMonth, interval);
+    }
+  }
+
+  // ─── FREQ=YEARLY ───
+  else if (freq === 'YEARLY') {
+    let current = new Date(dtstart.getTime());
+
+    while (current <= effectiveEnd && results.length < maxOccurrences) {
+      if (count && totalGenerated >= count) break;
+
+      if (current >= dtstart) {
+        totalGenerated++;
+        if (current >= searchStart && current <= effectiveEnd) {
+          const dateKey = toLocalDateStr(current);
+          if (!exdatesSet.has(dateKey)) {
+            results.push(new Date(current.getTime()));
+          }
+        }
+      }
+
+      current = new Date(
+        current.getFullYear() + interval,
+        current.getMonth(),
+        current.getDate(),
+        byHour,
+        byMinute,
+        bySecond
+      );
+    }
+  }
+
+  return results;
+}
+
+// ─── EXPANDIR EVENTOS RECORRENTES ───
+
+function expandRecurringEvents(recurringEvents, searchStart, searchEnd) {
+  const results = [];
+  const MAX_OCCURRENCES_PER_EVENT = 366; // Limite de seguranca
+
+  for (const evt of recurringEvents) {
+    if (!evt.rrule || !evt.start_event) continue;
+
+    const rrule = parseRRule(evt.rrule);
+    const evtStart = new Date(evt.start_event);
+    const evtEnd = evt.end_event ? new Date(evt.end_event) : null;
+    const duration = evtEnd
+      ? (evtEnd.getTime() - evtStart.getTime())
+      : 15 * 60 * 1000; // 15 min padrao
+
+    // Montar set de exdates
+    const exdatesSet = new Set();
+    if (evt.exdates && Array.isArray(evt.exdates)) {
+      for (const ex of evt.exdates) {
+        if (ex) {
+          exdatesSet.add(toLocalDateStr(new Date(ex)));
+        }
+      }
+    }
+
+    // Ajustar effectiveEnd com repeats_until da tabela
+    let effectiveEnd = new Date(searchEnd.getTime());
+    if (evt.repeats_until) {
+      const ru = new Date(evt.repeats_until);
+      if (ru < effectiveEnd) effectiveEnd = ru;
+    }
+
+    // Gerar ocorrencias
+    const occurrences = generateOccurrences(
+      rrule,
+      evtStart,
+      searchStart,
+      effectiveEnd,
+      exdatesSet,
+      MAX_OCCURRENCES_PER_EVENT
+    );
+
+    // Criar "eventos virtuais" para cada ocorrencia
+    for (const occ of occurrences) {
+      const occEnd = new Date(occ.getTime() + duration);
+
+      // Formatar em ISO com -03:00
+      const startISO = formatBRT(occ);
+      const endISO = formatBRT(occEnd);
+
+      results.push({
+        id: evt.id,                              // mesmo ID do evento pai
+        event_name: evt.event_name,
+        desc_event: evt.desc_event,
+        start_event: startISO,
+        end_event: endISO,
+        reminder: evt.reminder,
+        user_id: evt.user_id,
+        is_recurring: true,
+        rrule: evt.rrule,
+        timezone: evt.timezone,
+        connect_google: evt.connect_google,
+        session_event_id_google: evt.session_event_id_google,
+        calendar_email_created: evt.calendar_email_created,
+        channel: evt.channel,
+        _is_virtual_occurrence: true,            // flag para identificar
+        _parent_recurring_id: evt.id             // referencia ao evento pai
+      });
+    }
+  }
+
+  return results;
+}
+
+// ─── FORMATAR DATA EM BRT (-03:00) ───
+
+function formatBRT(date) {
+  // Converte para string ISO com offset -03:00
+  // Assumindo que o servidor esta em UTC, ajustamos manualmente
+  const offsetMs = -3 * 60 * 60 * 1000;
+  const local = new Date(date.getTime() + offsetMs);
+
+  const y = local.getUTCFullYear();
+  const mo = String(local.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(local.getUTCDate()).padStart(2, '0');
+  const h = String(local.getUTCHours()).padStart(2, '0');
+  const mi = String(local.getUTCMinutes()).padStart(2, '0');
+  const s = String(local.getUTCSeconds()).padStart(2, '0');
+
+  return `${y}-${mo}-${d}T${h}:${mi}:${s}-03:00`;
+}
+
+// ─── EXECUCAO PRINCIPAL ───
+
+// 1. Pegar eventos normais
+const normalEvents = normalItems.filter(evt => !evt.is_recurring);
+
+// 2. Expandir recorrentes
+const virtualOccurrences = expandRecurringEvents(recurringItems, rangeStart, rangeEnd);
+
+// 3. Juntar tudo
+const allEvents = [...normalEvents, ...virtualOccurrences];
+
+// 4. Ordenar por start_event
+allEvents.sort((a, b) => {
+  const dateA = new Date(a.start_event);
+  const dateB = new Date(b.start_event);
+  return dateA.getTime() - dateB.getTime();
+});
+
+// 5. Retornar
+return allEvents.map(evt => ({ json: evt }));
