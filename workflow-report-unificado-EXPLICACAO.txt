@@ -1,0 +1,124 @@
+WORKFLOW REPORT UNIFICADO - EXPLICAÇÃO
+══════════════════════════════════════
+
+SUBSTITUI:
+- Os 2 fluxos paralelos (semanal + mensal) do workflow de relatórios
+- ~30 nodes viram 10 nodes
+
+NÃO INCLUI (por enquanto):
+- Os schedule triggers (trigger-semanal, trigger-mensal1) que resetam flags
+- Os updates de recurrency_report
+- Esses podem ser mantidos no workflow original ou adaptados depois
+
+══════════════════════════════════════
+FLUXO (10 nodes, linha reta):
+══════════════════════════════════════
+
+webhook-report
+  Recebe: { user_id, startDate, endDate, tipo, label }
+  Path: /webhook/report
+  Auth: basicAuth (Avelum Credential)
+      │
+      ▼
+buscar-perfil
+  Supabase GET profiles WHERE id = user_id
+      │
+      ▼
+buscar-gastos
+  Supabase GETALL spent WHERE fk_user = profile.id
+    AND date_spent >= startDate AND date_spent <= endDate
+  alwaysOutputData: true (retorna vazio sem erro)
+      │
+      ▼
+gerar-html
+  Code node único. Usa tipo e label do webhook para:
+    - tipo "semanal"       → título "Resumo da sua semana"
+    - tipo "mensal"        → título "Resumo do seu mês"
+    - tipo "personalizado" → título "Resumo do período"
+  Mesma lógica de: saidas/entradas, sort, totais, HTML/CSS
+  ZERO cálculo de datas (vem tudo pronto do webhook)
+      │
+      ▼
+aggregate
+  Junta tudo num item só (segurança)
+      │
+      ▼
+html-para-binario
+  Converte HTML string → binary (base64, mimeType text/html)
+  Mesmo código que Code in JavaScript / Code in JavaScript1
+      │
+      ▼
+gotenberg-pdf
+  POST http://totalassistente-gotenberg:3000/forms/chromium/convert/html
+  Envia HTML binary → recebe PDF binary
+      │
+      ▼
+upload-pdf-whatsapp
+  POST graph.facebook.com/v23.0/744582292082931/media
+  Upload do PDF. Filename dinâmico: relatorio-{tipo}.pdf
+      │
+      ▼
+enviar-whatsapp
+  POST graph.facebook.com/v23.0/744582292082931/messages
+  Envia documento pro phone do usuário (buscar-perfil.phone)
+      │
+      ▼
+resposta-sucesso
+  Set { sucesso: "documento enviado" }
+
+
+══════════════════════════════════════
+O QUE MUDOU VS ORIGINAL:
+══════════════════════════════════════
+
+REMOVIDO:
+- Code3 (cálculo de semana WW/MM/YYYY → startDate/endDate)
+- Code4 (cálculo de mês YYYY-MM → startDate/endDate)
+- mostrar_html_pdf (HTML mensal) — substituído por gerar-html
+- mostrar_html_pdf1 (HTML semanal) — substituído por gerar-html
+- Aggregate duplicado
+- Code in JavaScript duplicado
+- HTTP Request duplicado (Gotenberg)
+- Upload PDF duplicado
+- Enviar WhatsApp duplicado
+- Edit Fields duplicado
+
+MANTIDO IDENTICO:
+- Lógica de saidas/entradas/sort/totais no HTML
+- CSS inteiro do PDF
+- Fluxo Gotenberg (mesmo endpoint, mesmo formato)
+- Upload WhatsApp (mesmo endpoint, mesmo formato multipart)
+- Envio WhatsApp (mesmo jsonBody, mesmo endpoint)
+- Credentials (todas as mesmas IDs)
+- Logo URL
+- Texto do footer
+
+ADICIONADO:
+- tipo "personalizado" com título/descrição próprios
+- Filename dinâmico: relatorio-semanal.pdf / relatorio-mensal.pdf / relatorio-personalizado.pdf
+- label do webhook vai direto como título do período no PDF
+- pinData de teste já incluído no JSON
+
+
+══════════════════════════════════════
+COMO IMPORTAR:
+══════════════════════════════════════
+
+1. No n8n, vá em Workflows → Import from File
+2. Selecione workflow-report-unificado.json
+3. As credentials já apontam para os IDs corretos do seu n8n
+4. Ative o workflow
+5. Teste com o pinData incluso (clique no webhook → Test)
+
+══════════════════════════════════════
+SOBRE OS SCHEDULE TRIGGERS + RECURRENCY:
+══════════════════════════════════════
+
+Os triggers que resetam weekly/monthly na tabela recurrency_report
+NÃO estão neste workflow. Opções:
+
+A) Manter no workflow original (só os triggers + updates)
+B) Adaptar para um campo único "ultimo_relatorio" com timestamp
+C) Remover se não forem mais necessários
+
+Isso é independente e pode ser decidido depois.

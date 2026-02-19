@@ -1,0 +1,352 @@
+{
+  "name": "Report Unificado - Total Assistente",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "report",
+        "authentication": "basicAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [80, 400],
+      "id": "wh-report-001",
+      "name": "webhook-report",
+      "webhookId": "report-unificado-001",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "fSx1ApZPcITxgUNE",
+          "name": "Avelum Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "tableId": "profiles",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "keyValue": "={{ $json.body.user_id }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [300, 400],
+      "id": "buscar-perfil-001",
+      "name": "buscar-perfil",
+      "credentials": {
+        "supabaseApi": {
+          "id": "kQkN5PrZm2GihQfS",
+          "name": "Total Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "spent",
+        "filterType": "string",
+        "filterString": "=fk_user=eq.{{ $json.id }}&date_spent=gte.{{ $('webhook-report').item.json.body.startDate }}&date_spent=lte.{{ $('webhook-report').item.json.body.endDate }}"
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [520, 400],
+      "id": "buscar-gastos-001",
+      "name": "buscar-gastos",
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "kQkN5PrZm2GihQfS",
+          "name": "Total Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const webhookData = $('webhook-report').item.json;\nconst body = webhookData.body || webhookData;\n\nconst tipo = body.tipo || 'mensal';\nconst label = body.label || '';\nconst startPeriod = body.startDate || '';\nconst endPeriod = body.endDate || '';\n\nconst itemsSrc = $items('buscar-gastos');\n\nfunction round2(n) {\n  const x = Number(n ?? 0);\n  return Number.isFinite(x) ? Number(x.toFixed(2)) : 0;\n}\n\nfunction dISO(s) {\n  if (!s) return '';\n  const d = new Date(s);\n  if (isNaN(d)) return '';\n  const dia = String(d.getDate()).padStart(2, '0');\n  const mes = String(d.getMonth() + 1).padStart(2, '0');\n  const ano = d.getFullYear();\n  return `${dia}/${mes}/${ano}`;\n}\n\nfunction formatDateShortISO(iso) {\n  if (!iso) return '';\n  const d = new Date(iso);\n  if (isNaN(d)) return '';\n  const dia = String(d.getDate()).padStart(2, '0');\n  const mes = String(d.getMonth() + 1).padStart(2, '0');\n  const ano = d.getFullYear();\n  return `${dia}/${mes}/${ano}`;\n}\n\nlet titulo = 'Resumo financeiro';\nlet subtitulo = 'Relatório financeiro';\nlet descricao = '';\nlet labelSaidas = 'Total de saídas:';\nlet labelEntradas = 'Total de entradas:';\nlet labelSaldo = 'Saldo final:';\n\nif (tipo === 'semanal') {\n  titulo = 'Resumo da sua semana';\n  subtitulo = 'Relatório financeiro semanal';\n  descricao = 'Este relatório mostra suas <strong>entradas</strong> e <strong>saídas</strong> da semana, organizadas por data, tipo de gasto e categoria. Use este PDF para enxergar como foi a sua semana e ajustar as decisões para a próxima.';\n  labelSaidas = 'Total de saídas na semana:';\n  labelEntradas = 'Total de entradas na semana:';\n  labelSaldo = 'Saldo da semana:';\n} else if (tipo === 'mensal') {\n  titulo = 'Resumo do seu mês';\n  subtitulo = 'Relatório financeiro mensal';\n  descricao = 'Este relatório mostra suas <strong>entradas</strong> e <strong>saídas</strong> do mês, organizadas por data, tipo de gasto e categoria. Use este PDF para enxergar para onde seu dinheiro está indo e ajustar suas decisões para o próximo mês.';\n} else {\n  titulo = 'Resumo do período';\n  subtitulo = 'Relatório financeiro personalizado';\n  descricao = 'Este relatório mostra suas <strong>entradas</strong> e <strong>saídas</strong> do período selecionado, organizadas por data, tipo de gasto e categoria.';\n}\n\nlet periodoDatas = '';\nif (startPeriod && endPeriod) {\n  const inicio = formatDateShortISO(startPeriod);\n  const fim = formatDateShortISO(endPeriod);\n  if (inicio && fim) {\n    periodoDatas = `${inicio} a ${fim}`;\n  }\n}\n\nconst regs = itemsSrc.map(it => ({\n  Data: dISO(it.json.date_spent),\n  Nome: it.json.name_spent ?? '',\n  Categoria: it.json.category_spent ?? '',\n  Tipo: it.json.type_spent ?? '',\n  Transacao: String(it.json.transaction_type || '').toLowerCase(),\n  Valor: round2(it.json.value_spent)\n})).filter(r => !!r.Data);\n\nconst saidas = regs.filter(r => r.Transacao === 'saida');\nconst entradas = regs.filter(r => r.Transacao === 'entrada');\n\nconst cmp = (a, b) => {\n  if (a.Data < b.Data) return -1;\n  if (a.Data > b.Data) return 1;\n  return (a.Nome || '').localeCompare(b.Nome || '', 'pt-BR', { sensitivity: 'base' });\n};\n\nsaidas.sort(cmp);\nentradas.sort(cmp);\n\nconst totalSaidas = round2(saidas.reduce((s, r) => s + (r.Valor || 0), 0));\nconst totalEntradas = round2(entradas.reduce((s, r) => s + (r.Valor || 0), 0));\nconst saldoFinal = round2(totalEntradas - totalSaidas);\n\nconst logoUrl = 'https://totalassistente.com.br/assets/logo-dark-DnpWvJkw.png';\n\nfunction linhaTr(r) {\n  const cor = r.Transacao === 'saida' ? '#ffdddd' : '#ddffdd';\n  return `\n    <tr style=\"background:${cor};\">\n      <td>${r.Data}</td>\n      <td>${r.Nome}</td>\n      <td>${r.Categoria}</td>\n      <td>${r.Tipo}</td>\n      <td style=\"text-transform:uppercase;\">${r.Transacao}</td>\n      <td style=\"text-align:right;\">R$ ${r.Valor.toFixed(2).replace('.', ',')}</td>\n    </tr>\n  `;\n}\n\nconst linhasTabela = [...saidas, ...entradas].map(linhaTr).join('\\n');\n\nconst html = `\n<!DOCTYPE html>\n<html lang=\"pt-BR\">\n<head>\n<meta charset=\"UTF-8\" />\n<title>${subtitulo} - Total Assistente</title>\n<style>\n  body {\n    font-family: Arial, sans-serif;\n    margin: 24px;\n    color: #222;\n  }\n  .header {\n    display: flex;\n    align-items: center;\n    justify-content: space-between;\n    border-bottom: 2px solid #eee;\n    padding-bottom: 12px;\n    margin-bottom: 16px;\n  }\n  .header-logo img {\n    height: 48px;\n  }\n  .header-text {\n    text-align: right;\n    font-size: 12px;\n  }\n  h1 {\n    font-size: 20px;\n    margin: 8px 0;\n    text-align: left;\n  }\n  .periodo {\n    text-align: center;\n    font-size: 14px;\n    margin-top: 4px;\n    margin-bottom: 10px;\n    color: #555;\n  }\n  .periodo span {\n    font-weight: 600;\n  }\n  .periodo small {\n    font-size: 11px;\n    color: #777;\n  }\n  .resumo {\n    margin: 12px 0 20px 0;\n    font-size: 13px;\n  }\n  table {\n    width: 100%;\n    border-collapse: collapse;\n    font-size: 11px;\n  }\n  th, td {\n    border: 1px solid #ddd;\n    padding: 6px 8px;\n  }\n  th {\n    background: #f0f0f0;\n    text-align: left;\n  }\n  .totais {\n    margin-top: 18px;\n    font-size: 13px;\n  }\n  .totais .linha-total {\n    display: flex;\n    justify-content: space-between;\n    margin-bottom: 4px;\n  }\n  .saldo-positivo {\n    color: #0c8a00;\n    font-weight: bold;\n  }\n  .saldo-negativo {\n    color: #c00;\n    font-weight: bold;\n  }\n  .footer {\n    margin-top: 32px;\n    font-size: 10px;\n    text-align: center;\n    color: #777;\n  }\n</style>\n</head>\n<body>\n  <div class=\"header\">\n    <div class=\"header-logo\">\n      <img src=\"${logoUrl}\" alt=\"Total Assistente\" />\n    </div>\n    <div class=\"header-text\">\n      <div><strong>Total Assistente</strong></div>\n      <div>${subtitulo}</div>\n      <div>Gerado em: ${new Date().toLocaleString('pt-BR')}</div>\n    </div>\n  </div>\n\n  <h1>${titulo}</h1>\n  <div class=\"periodo\">\n    ${label ? `<span>${label}</span>` : ''}\n    ${periodoDatas ? `<br/><small>${periodoDatas}</small>` : ''}\n  </div>\n  <div class=\"resumo\">\n    ${descricao}\n  </div>\n\n  <table>\n    <thead>\n      <tr>\n        <th>Data</th>\n        <th>Nome</th>\n        <th>Categoria</th>\n        <th>Tipo</th>\n        <th>Transação</th>\n        <th>Valor</th>\n      </tr>\n    </thead>\n    <tbody>\n      ${linhasTabela || '<tr><td colspan=\"6\" style=\"text-align:center;\">Nenhum lançamento encontrado no período.</td></tr>'}\n    </tbody>\n  </table>\n\n  <div class=\"totais\">\n    <div class=\"linha-total\">\n      <span>${labelSaidas}</span>\n      <span>R$ ${totalSaidas.toFixed(2).replace('.', ',')}</span>\n    </div>\n    <div class=\"linha-total\">\n      <span>${labelEntradas}</span>\n      <span>R$ ${totalEntradas.toFixed(2).replace('.', ',')}</span>\n    </div>\n    <div class=\"linha-total\">\n      <span>${labelSaldo}</span>\n      <span class=\"${saldoFinal >= 0 ? 'saldo-positivo' : 'saldo-negativo'}\">\n        R$ ${saldoFinal.toFixed(2).replace('.', ',')}\n      </span>\n    </div>\n  </div>\n\n  <div class=\"footer\">\n    Relatório gerado automaticamente pelo Total Assistente • Organize sua vida financeira pelo WhatsApp\n  </div>\n</body>\n</html>\n`;\n\nreturn [{\n  json: {\n    html\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [740, 400],
+      "id": "gerar-html-001",
+      "name": "gerar-html"
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [960, 400],
+      "id": "aggregate-001",
+      "name": "aggregate"
+    },
+    {
+      "parameters": {
+        "jsCode": "const html = $json.data?.[0]?.html ?? $json.html ?? '';\n\nconst buffer = Buffer.from(html, 'utf8');\n\nreturn [\n  {\n    json: { ok: true },\n    binary: {\n      data: {\n        data: buffer.toString('base64'),\n        mimeType: 'text/html',\n        fileName: 'index.html',\n      },\n    },\n  },\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1180, 400],
+      "id": "html-binario-001",
+      "name": "html-para-binario"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://totalassistente-gotenberg:3000/forms/chromium/convert/html",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "files",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [1400, 400],
+      "id": "gotenberg-001",
+      "name": "gotenberg-pdf"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v23.0/744582292082931/media",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            },
+            {
+              "name": "messaging_product",
+              "value": "whatsapp"
+            },
+            {
+              "name": "type",
+              "value": "application/pdf"
+            },
+            {
+              "name": "filename",
+              "value": "=relatorio-{{ $('webhook-report').item.json.body.tipo || 'financeiro' }}.pdf"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "upload-pdf-whatsapp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1620, 400],
+      "id": "upload-pdf-001",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "TDDrQvr1s0RxXTTC",
+          "name": "WhatsApp Header Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v23.0/744582292082931/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  messaging_product: 'whatsapp',\n  to: $('buscar-perfil').item.json.phone || '5543999999999',\n  type: 'document',\n  document: {\n    id: $json.id,\n    filename: 'relatorio-' + ($('webhook-report').item.json.body.tipo || 'financeiro') + '.pdf',\n    caption: 'Seu relatório do Total Assistente!'\n  }\n} }}",
+        "options": {}
+      },
+      "name": "enviar-whatsapp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1840, 400],
+      "id": "enviar-whatsapp-001",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "TDDrQvr1s0RxXTTC",
+          "name": "WhatsApp Header Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "sucesso-001",
+              "name": "sucesso",
+              "value": "documento enviado",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [2060, 400],
+      "id": "sucesso-001",
+      "name": "resposta-sucesso"
+    },
+    {
+      "parameters": {
+        "content": "## Relatório Unificado (semanal + mensal + personalizado)\nWebhook recebe: { user_id, startDate, endDate, tipo, label }\nQuery direto no Supabase sem cálculo de datas.",
+        "height": 300,
+        "width": 2200
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [0, 200],
+      "typeVersion": 1,
+      "id": "sticky-001",
+      "name": "Sticky Note"
+    }
+  ],
+  "connections": {
+    "webhook-report": {
+      "main": [
+        [
+          {
+            "node": "buscar-perfil",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "buscar-perfil": {
+      "main": [
+        [
+          {
+            "node": "buscar-gastos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "buscar-gastos": {
+      "main": [
+        [
+          {
+            "node": "gerar-html",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "gerar-html": {
+      "main": [
+        [
+          {
+            "node": "aggregate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "aggregate": {
+      "main": [
+        [
+          {
+            "node": "html-para-binario",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "html-para-binario": {
+      "main": [
+        [
+          {
+            "node": "gotenberg-pdf",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "gotenberg-pdf": {
+      "main": [
+        [
+          {
+            "node": "upload-pdf-whatsapp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "upload-pdf-whatsapp": {
+      "main": [
+        [
+          {
+            "node": "enviar-whatsapp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "enviar-whatsapp": {
+      "main": [
+        [
+          {
+            "node": "resposta-sucesso",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {
+    "webhook-report": [
+      {
+        "headers": {},
+        "params": {},
+        "query": {},
+        "body": {
+          "user_id": "bb2c8e4e-b78e-4ee3-8d96-1873df195118",
+          "startDate": "2025-11-01T00:00:00-03:00",
+          "endDate": "2025-11-30T23:59:59-03:00",
+          "tipo": "mensal",
+          "label": "Novembro de 2025"
+        },
+        "webhookUrl": "https://totalassistente.com.br/webhook/report",
+        "executionMode": "production"
+      }
+    ]
+  },
+  "meta": {
+    "instanceId": "c4205d5b77ecfb7c5f0bc3b25969f10bab24d6fe34fb86cd8e32c8dc2fb80e01"
+  }
+}
