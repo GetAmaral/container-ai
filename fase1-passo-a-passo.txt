@@ -1,0 +1,93 @@
+FASE 1 — CORRIGIR WEBHOOK (TOKEN REFRESH)
+==========================================
+
+PROBLEMA: O webhook nao renova o access_token quando expira (1h).
+          Depois de 1h, toda notificacao do Google falha silenciosamente.
+
+CORRECAO: Adicionar funcao getValidAccessToken() que renova automaticamente.
+
+==========================================
+PASSO A PASSO
+==========================================
+
+PASSO 1:
+  Abra o Supabase Dashboard
+  Va em: Edge Functions > google-calendar-webhook
+
+PASSO 2:
+  Clique no codigo da function para editar
+
+PASSO 3:
+  Selecione TUDO (Ctrl+A) e DELETE
+
+PASSO 4:
+  Abra o arquivo fase1-google-calendar-webhook.ts no GitHub:
+  https://github.com/GetAmaral/container-ai
+
+PASSO 5:
+  Copie TODO o conteudo do arquivo (Ctrl+A, Ctrl+C)
+
+PASSO 6:
+  Cole no editor do Supabase (Ctrl+V)
+
+PASSO 7:
+  Clique em "Deploy" ou "Save"
+
+PASSO 8:
+  Verifique que o status ficou ACTIVE (sem erro de compilacao)
+
+==========================================
+O QUE MUDOU (vs versao atual)
+==========================================
+
+ADICIONADO:
+  - Funcao getValidAccessToken() (linhas 21-88)
+    Essa funcao:
+    1. Busca tokens via RPC secure_get_google_tokens
+    2. Se token valido (>5min pra expirar): retorna direto
+    3. Se expirado: faz POST pro Google com refresh_token
+    4. Grava novo token via RPC store_access_token (criptografado)
+    5. Reseta contador de falhas
+
+MODIFICADO:
+  - performIncrementalSync() agora chama getValidAccessToken(userId)
+    ao inves de usar tokens.access_token direto (linha 162)
+
+NAO MODIFICADO:
+  - Handler do webhook (logica de sync/exists)
+  - processEventChange (insert/update/delete)
+  - Paginacao (do...while com nextPageToken)
+  - Validacao de headers (channelId + resourceId)
+  - CORS headers
+  - Isolamento por user_id
+
+==========================================
+COMO TESTAR
+==========================================
+
+TESTE RAPIDO:
+  1. Va no Supabase > Table Editor > google_calendar_connections
+  2. Ache um user conectado (is_connected = true)
+  3. Mude o expires_at para uma data no passado (ex: 2024-01-01)
+  4. Crie um evento no Google Calendar desse user
+  5. Espere ~30 segundos
+  6. Verifique nos logs da Edge Function se aparece:
+     "Refreshing access token for user ..."
+     "Token refreshed for user ..."
+     "Incremental sync completed for user ..."
+  7. Verifique se o evento apareceu na tabela calendar
+
+SE DER ERRO:
+  - "Token refresh failed: 400" = refresh_token invalido
+    (user precisa reconectar o Google Calendar)
+  - "Failed to get tokens" = user nao existe ou nao esta conectado
+  - "Google API error: 401" = token novo nao funcionou
+    (verificar se GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET estao corretos)
+
+==========================================
+ROLLBACK (se precisar voltar)
+==========================================
+
+Se algo der errado, a versao anterior esta salva automaticamente
+no Supabase (versao 32). Basta fazer deploy da versao anterior
+pelo historico de versoes da Edge Function.
