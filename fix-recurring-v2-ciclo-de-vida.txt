@@ -1,0 +1,301 @@
+================================================================================
+CICLO DE VIDA COMPLETO: EVENTOS RECORRENTES
+================================================================================
+Data: 2026-02-19
+
+Cobre TODOS os cenarios de inicio, disparo, pausa, termino e exclusao
+de eventos recorrentes.
+
+================================================================================
+CENARIO 1: CRIACAO COM DATA DE TERMINO (repeats_until)
+================================================================================
+
+Exemplo do usuario:
+  "me lembra de tomar remedio entre 10 e 20 de dezembro"
+  "me lembra todo dia as 9h ate o dia 20/03"
+  "toda segunda dentista, ate marco"
+
+O que o AI Agent deve gerar:
+  {
+    "acao": "evento_recorrente",
+    "tool": {
+      "nome_evento": "Tomar remedio",
+      "rrule": "FREQ=DAILY;BYHOUR=9;BYMINUTE=0;BYSECOND=0",
+      "dtstart": "2026-12-10T09:00:00-03:00",
+      "timezone": "America/Sao_Paulo",
+      "until": "2026-12-20T23:59:59-03:00",   <── DATA DE TERMINO
+      "exdates": "",
+      "channel": "whatsapp"
+    },
+    "mensagem": "..."
+  }
+
+O que ja funciona no fluxo de criacao:
+  - O node "Calcular end & Recurrence" ja processa o campo "until"
+  - Ele injeta UNTIL na RRULE: FREQ=DAILY;...;UNTIL=20261221T025959Z
+
+O que FALTA no fluxo de criacao:
+  - Setar "repeats_until" na tabela calendar
+  - Setar "next_fire_at" (correcao C ja documentada)
+
+================================================================================
+CORRECAO: ADICIONAR repeats_until NO INSERT
+================================================================================
+
+Nos 2 nodes de INSERT do Supabase
+(create_calendar_sup_google e create_calendar_sup_local):
+
+ADICIONAR ESSES 2 CAMPOS:
+
+  fieldId: "next_fire_at"
+  fieldValue: {{ $('SET user_id (debug)1').item.json.start }}
+
+  fieldId: "repeats_until"
+  fieldValue: {{ $('Criar Lembrete Recorrente').item.json.body.until || '' }}
+
+NOTA: Se "until" vier vazio, repeats_until fica NULL no banco
+(evento repete indefinidamente). Se vier com data, o evento
+tem data de termino.
+
+================================================================================
+CENARIO 2: RRULE EXPIRA NATURALMENTE (UNTIL/COUNT)
+================================================================================
+
+Exemplo: RRULE com UNTIL=20261220T025959Z
+  - O cron dispara ate 20/12
+  - No dia 21/12, o Code "Avancar next_fire_at" chama
+    getNextOccurrence() que retorna null
+  - O code retorna: { active: false, next_fire_at: null }
+  - O Supabase Update desativa o evento
+
+JA ESTA IMPLEMENTADO no fix-recurring-v2-reminder-code.txt:
+
+  if (!finalNext) {
+    return [{
+      json: {
+        id: evt.id,
+        next_fire_at: null,
+        last_fired_at: now.toISOString(),
+        active: false,       // <── desativa automaticamente
+        _action: 'deactivate'
+      }
+    }];
+  }
+
+Tambem respeita repeats_until da tabela:
+
+  if (finalNext && evt.repeats_until) {
+    const ru = new Date(evt.repeats_until);
+    if (finalNext > ru) finalNext = null;  // <── para de repetir
+  }
+
+NENHUMA MUDANCA NECESSARIA para esse cenario.
+
+================================================================================
+CENARIO 3: USUARIO PEDE PARA PARAR ("para de me lembrar")
+================================================================================
+
+Exemplos:
+  "para de me lembrar do dentista"
+  "cancela o lembrete recorrente do dentista"
+  "desativa o lembrete do remedio"
+
+O que deve acontecer:
+  1. Buscar o evento pelo nome
+  2. Setar active = false e next_fire_at = NULL
+  3. NAO deletar a row (manter historico)
+
+IMPLEMENTACAO:
+
+No fluxo de EXCLUSAO (excluir-evento-total), apos encontrar o evento,
+verificar se is_recurring = true:
+
+  Se is_recurring = true:
+    - Em vez de deletar a row, fazer UPDATE:
+        active = false
+        next_fire_at = NULL
+        last_fired_at = now (registro de quando parou)
+    - Mensagem: "Pronto, parei de te lembrar do Dentista."
+
+  Se is_recurring = false:
+    - Deletar normalmente (como ja faz)
+
+ALTERNATIVA (se quiser deletar de verdade):
+  Se o usuario disser "exclui" ou "apaga", pode deletar a row.
+  Se disser "para" ou "cancela" ou "desativa", apenas desativa.
+
+O prompt do agente de exclusao (prompt_excluir) deve ser atualizado
+para reconhecer a diferenca entre "excluir" e "desativar/parar".
+
+================================================================================
+CENARIO 4: USUARIO QUER PULAR UMA OCORRENCIA ("pula essa quinta")
+================================================================================
+
+Exemplos:
+  "pula o dentista dessa quinta"
+  "nao preciso do lembrete do remedio amanha"
+  "cancela so o de hoje, mas continua semana que vem"
+
+O que deve acontecer:
+  1. Identificar qual data o usuario quer pular
+  2. Adicionar essa data ao array exdates da tabela
+  3. Se a data pulada for a PROXIMA (next_fire_at), avancar next_fire_at
+
+IMPLEMENTACAO:
+
+Precisa de um novo endpoint/fluxo ou adaptar o de edicao:
+
+  1. Buscar o evento recorrente
+  2. Calcular a data a pular (ex: proxima quinta = 2026-02-26)
+  3. UPDATE no Supabase:
+     - exdates = array_append(exdates, '2026-02-26T16:20:00-03:00')
+  4. Se next_fire_at = data pulada:
+     - Calcular a ocorrencia SEGUINTE e atualizar next_fire_at
+
+Supabase SQL para adicionar exdate:
+
+  UPDATE calendar
+  SET exdates = array_append(
+    COALESCE(exdates, ARRAY[]::timestamptz[]),
+    '2026-02-26T16:20:00-03:00'::timestamptz
+  )
+  WHERE id = '{event_id}';
+
+No n8n, pode usar HTTP Request com PATCH:
+
+  PATCH /rest/v1/calendar?id=eq.{event_id}
+  Body: {
+    "exdates": "{{ JSON.stringify([
+      ...($json.exdates || []),
+      '2026-02-26T16:20:00-03:00'
+    ]) }}"
+  }
+
+NOTA: O Code "Avancar next_fire_at" JA respeita exdates:
+
+  // Se a proxima data esta nos exdates, pular para a seguinte
+  while (finalNext && attempts < 100) {
+    if (!exSet.has(dk)) break;
+    finalNext = getNextOccurrence(evt.rrule, dtstart, finalNext);
+  }
+
+================================================================================
+CENARIO 5: USUARIO MUDA A DATA DE TERMINO
+================================================================================
+
+Exemplos:
+  "estende o dentista ate junho"
+  "o remedio agora e so ate o dia 15"
+  "muda pra parar em marco"
+
+O que deve acontecer:
+  1. Buscar o evento recorrente
+  2. UPDATE: repeats_until = nova data
+  3. Se o evento estava desativado (active=false) e a nova data
+     e no futuro, reativar:
+       active = true
+       next_fire_at = proxima ocorrencia a partir de agora
+
+NOTA: O RRULE tambem tem UNTIL. Se voce quiser manter consistencia,
+atualize a RRULE tambem. Mas como o Code de lembretes ja checa
+repeats_until da tabela, pode so atualizar a coluna.
+
+================================================================================
+CENARIO 6: USUARIO DELETA O EVENTO RECORRENTE
+================================================================================
+
+Exemplos:
+  "exclui o dentista"
+  "apaga o lembrete do remedio"
+
+OPCAO A - Soft delete (recomendado):
+  UPDATE: active = false, next_fire_at = NULL
+
+OPCAO B - Hard delete:
+  DELETE FROM calendar WHERE id = '{event_id}'
+
+IMPORTANTE PARA GOOGLE CALENDAR:
+  Se o evento tem session_event_id_google (foi criado no Google),
+  o trigger tr_sync_calendar_to_google vai tentar sincronizar.
+  Verifique se esse trigger lida corretamente com DELETE de
+  eventos recorrentes no Google (deve deletar o evento inteiro,
+  nao so uma ocorrencia).
+
+================================================================================
+CENARIO 7: REATIVAR EVENTO RECORRENTE
+================================================================================
+
+Exemplos:
+  "volta o lembrete do dentista"
+  "reativa o remedio"
+
+O que deve acontecer:
+  1. Buscar o evento (inclusive active=false)
+  2. Calcular proxima ocorrencia a partir de AGORA
+  3. UPDATE:
+     active = true
+     next_fire_at = proxima ocorrencia
+     remembered = false (para nao recorrentes que foram desativados)
+
+================================================================================
+RESUMO: CAMPOS E SEUS PAPEIS
+================================================================================
+
+  Campo           | Papel
+  ----------------+--------------------------------------------------
+  active          | TRUE = evento vivo, FALSE = parado/encerrado
+  next_fire_at    | Proxima vez que o cron deve disparar
+  last_fired_at   | Ultima vez que o cron disparou (auditoria)
+  remembered      | Para NAO recorrentes: TRUE = ja notificou
+                  | Para recorrentes: IGNORADO (usar next_fire_at)
+  repeats_until   | Data limite de repeticao (NULL = infinito)
+  exdates         | Array de datas puladas/excluidas
+  rrule           | Regra de repeticao (fonte da verdade)
+  start_event     | Data/hora da PRIMEIRA ocorrencia original
+
+================================================================================
+TABELA DE ACOES POR CENARIO
+================================================================================
+
+  Cenario                  | active | next_fire_at     | repeats_until | exdates
+  -------------------------+--------+------------------+---------------+---------
+  Criar evento             | true   | dtstart          | until ou NULL | []
+  Disparo normal           | true   | proxima occ.     | (sem mudar)   | (sem mudar)
+  RRULE expira             | false  | NULL             | (sem mudar)   | (sem mudar)
+  Usuario para             | false  | NULL             | (sem mudar)   | (sem mudar)
+  Usuario pula 1 data      | true   | proxima occ.     | (sem mudar)   | + data
+  Usuario muda until       | true   | recalcular       | nova data     | (sem mudar)
+  Usuario exclui           | false  | NULL             | (sem mudar)   | (sem mudar)
+  Usuario reativa          | true   | proxima occ.     | (sem mudar)   | (sem mudar)
+
+================================================================================
+PROMPT DO AGENTE RECORRENTE: AJUSTE PARA "ENTRE DATAS"
+================================================================================
+
+O prompt do agente de criacao de recorrentes (prompt_lembrete1)
+deve reconhecer padroes como:
+
+  "entre os dias 10 e 20 de dezembro"
+  "do dia 10 ao dia 20"
+  "de 10/12 a 20/12"
+  "a partir de segunda ate sexta que vem"
+
+E gerar:
+  dtstart = primeira data (10/12)
+  until = ultima data (20/12 23:59:59)
+
+Exemplo de saida esperada do agente:
+  {
+    "acao": "evento_recorrente",
+    "tool": {
+      "nome_evento": "Tomar remedio",
+      "rrule": "FREQ=DAILY;BYHOUR=9;BYMINUTE=0;BYSECOND=0",
+      "dtstart": "2026-12-10T09:00:00-03:00",
+      "until": "2026-12-20T23:59:59-03:00",
+      ...
+    },
+    "mensagem": "✅ Evento recorrente registrado!\n\n📅 Nome: Tomar remedio\n🔁 Quando: Todo dia as 9h, de 10/12 a 20/12"
+  }
+
+O fluxo de criacao ja processa o campo "until" na RRULE.
+Com a correcao deste arquivo, tambem salva em repeats_until.
