@@ -1,0 +1,96 @@
+================================================================================
+DIAGNOSTICO COMPLETO: EVENTOS RECORRENTES
+================================================================================
+Data: 2026-02-19
+Versao: v2 (com analise do fluxo de lembretes + busca real)
+
+================================================================================
+PROBLEMA 1: BUSCA NAO ENCONTRA OCORRENCIAS FUTURAS
+================================================================================
+
+Fluxo: busca-total-evento
+Nodes: Code4 → Get many rows9
+
+O Code4 constroi query de sobreposicao:
+  start_event <= endUtc AND end_event >= startUtc
+
+Para um evento recorrente "Dentista toda quinta 16:20":
+  start_event = 2026-02-19T16:20:00 (primeira ocorrencia)
+  end_event   = 2026-02-19T16:35:00
+
+Busca por 2026-02-26 (proxima quinta):
+  start_event(19/02) <= end(26/02) = TRUE
+  end_event(19/02 16:35) >= start(26/02 00:00) = FALSE  ← FALHA!
+
+Resultado: evento recorrente NAO aparece em datas futuras.
+
+Solucao: Separar query em normais + recorrentes, expandir RRULE.
+
+================================================================================
+PROBLEMA 2: LEMBRETES NUNCA DISPARAM APOS A 1a OCORRENCIA
+================================================================================
+
+Fluxo: Lembretes (cron a cada 50s / 1min)
+
+Path 1 (Reminders due now):
+  Query: reminder=TRUE AND remembered=FALSE AND due_at ~ now
+  Apos disparar: remembered = TRUE
+
+Path 2 (Events in 30 min):
+  Query: reminder=FALSE AND remembered=FALSE AND start_event entre now e now+30min
+  Apos disparar: remembered = TRUE
+
+Problemas:
+
+  1) due_at e start_event = data da PRIMEIRA ocorrencia
+     → Nunca batem com datas futuras
+
+  2) remembered = TRUE e PERMANENTE
+     → Apos o primeiro disparo, o evento e ignorado para sempre
+     → Nao existe mecanismo para "resetar" para a proxima ocorrencia
+
+  3) Colunas next_fire_at e last_fired_at EXISTEM na tabela
+     mas NAO SAO USADAS em nenhum dos dois paths!
+
+Solucao: Usar next_fire_at para recorrentes, avançar apos cada disparo.
+
+================================================================================
+PROBLEMA 3: CRIACAO NAO SETA next_fire_at
+================================================================================
+
+Fluxo: criar-lembrete-recorrente-total
+
+Ao criar o evento recorrente, o fluxo insere na tabela com:
+  - start_event = dtstart (primeira ocorrencia)
+  - is_recurring = TRUE
+  - rrule = a RRULE
+  - remembered = FALSE
+
+Mas NAO seta:
+  - next_fire_at (fica NULL)
+  - last_fired_at (fica NULL)
+
+Solucao: Setar next_fire_at = dtstart na criacao.
+
+================================================================================
+RESUMO DAS 3 CORRECOES NECESSARIAS
+================================================================================
+
+CORRECAO A - BUSCA (busca-total-evento):
+  Arquivo: fix-recurring-v2-busca-code.txt
+  - Modificar Code4 para adicionar is_recurring=is.false
+  - Adicionar query paralela para recorrentes
+  - Adicionar Code node com RRULE expander
+  - Inserir antes do Aggregate8
+
+CORRECAO B - LEMBRETES (cron):
+  Arquivo: fix-recurring-v2-reminder-code.txt
+  - Adicionar query paralela para recorrentes usando next_fire_at
+  - Apos disparar recorrente: calcular proxima ocorrencia, atualizar next_fire_at
+  - NAO marcar remembered=TRUE para recorrentes
+
+CORRECAO C - CRIACAO (criar-lembrete-recorrente-total):
+  Arquivo: fix-recurring-v2-criacao-ajuste.txt
+  - Nos nodes de INSERT no Supabase, adicionar:
+    next_fire_at = dtstart (primeira ocorrencia)
+  - Tanto no path Google quanto no path local

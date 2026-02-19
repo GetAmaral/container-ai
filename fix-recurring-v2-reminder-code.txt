@@ -1,0 +1,359 @@
+================================================================================
+CORRECAO B: FLUXO DE LEMBRETES (cron de notificacoes)
+================================================================================
+
+O fluxo de lembretes tem 2 paths paralelos:
+
+  PATH 1: Reminders (a cada 50s)
+    Query: reminder=TRUE, remembered=FALSE, due_at ~ now
+    Apos disparar: remembered = TRUE
+
+  PATH 2: Events in 30 min (a cada 1min)
+    Query: reminder=FALSE, remembered=FALSE, start_event entre now e now+30min
+    Apos disparar: remembered = TRUE
+
+PROBLEMA: Para eventos recorrentes, apos o primeiro disparo,
+remembered=TRUE e NUNCA removido. O evento morre.
+
+================================================================================
+ESTRATEGIA DE CORRECAO
+================================================================================
+
+Para AMBOS os paths, a logica sera:
+
+  1. MANTER a query atual para eventos NAO recorrentes (funciona como esta)
+  2. ADICIONAR query paralela para eventos RECORRENTES usando next_fire_at
+  3. Apos disparar um recorrente:
+     - NAO marcar remembered=TRUE
+     - Calcular proxima ocorrencia via RRULE
+     - Atualizar next_fire_at com a proxima data
+     - Atualizar last_fired_at com agora
+
+================================================================================
+CORRECAO DO PATH 1: REMINDERS (DUE NOW)
+================================================================================
+
+PASSO 1.1 - Adicionar query para recorrentes
+
+Adicione um novo node Supabase ao lado do "Get Reminders (due now)":
+
+  Node: Supabase (Get All)
+  Name: "Get Recurring Reminders"
+  Table: calendar
+  Return All: true
+  Filters:
+    reminder = TRUE
+    is_recurring = TRUE
+    active = TRUE
+    next_fire_at >= {{ $now.minus({ minutes: 1 }) }}
+    next_fire_at <= {{ $now.plus({ minutes: 1 }) }}
+
+  OBS: NAO filtre por remembered! Para recorrentes, ignored.
+
+Conecte a saida ao "Merge Due Items" (input 2).
+Assim o Merge recebe tanto os lembretes normais quanto os recorrentes.
+
+PASSO 1.2 - Apos disparar, separar recorrente de normal
+
+Depois do "HTTP Request — send agenda template1" (que envia o WhatsApp),
+adicione um IF node:
+
+  Node: IF
+  Name: "If Recorrente?"
+  Condition: {{ $('Merge Due Items').item.json.is_recurring }} = true
+
+  TRUE  → Code node "Avancar next_fire_at" → Supabase Update
+  FALSE → "Mark as Remembered" (como ja esta)
+
+PASSO 1.3 - Code node "Avancar next_fire_at"
+
+Cole o codigo abaixo. Ele calcula a PROXIMA ocorrencia da RRULE
+e retorna os campos para atualizar no Supabase.
+
+---INICIO CODE AVANCAR---
+// ============================================================
+// Code: Calcular proxima ocorrencia de um evento recorrente
+// ============================================================
+// Input: o evento recorrente que acabou de disparar
+// Output: { next_fire_at, last_fired_at } para UPDATE no Supabase
+
+const evt = $('Merge Due Items').item.json;
+const now = new Date();
+
+// ─── RRULE Parser ───
+function parseRRule(rruleStr) {
+  if (!rruleStr) return {};
+  const str = rruleStr.replace(/^RRULE:/i, '').trim();
+  const parts = {};
+  for (const pair of str.split(';')) {
+    const eqIdx = pair.indexOf('=');
+    if (eqIdx === -1) continue;
+    parts[pair.substring(0, eqIdx).toUpperCase().trim()] = pair.substring(eqIdx + 1).trim();
+  }
+  return parts;
+}
+
+function parseRRuleDate(str) {
+  if (!str) return null;
+  const m = str.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})/);
+  if (!m) return new Date(str);
+  const iso = `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}`;
+  return str.endsWith('Z') ? new Date(iso + 'Z') : new Date(iso + '-03:00');
+}
+
+const DAY_MAP = { MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6, SU: 0 };
+
+function addDays(d, n) { const r = new Date(d.getTime()); r.setDate(r.getDate() + n); return r; }
+function addMonths(d, n) { const r = new Date(d.getTime()); r.setMonth(r.getMonth() + n); return r; }
+
+function getMonday(d) {
+  const r = new Date(d.getTime());
+  const day = r.getDay();
+  r.setDate(r.getDate() + (day === 0 ? -6 : 1 - day));
+  r.setHours(0, 0, 0, 0);
+  return r;
+}
+
+function getWeekdayInWeek(wk, targetDay) {
+  const d = new Date(wk.getTime());
+  d.setDate(d.getDate() + ((targetDay - d.getDay() + 7) % 7));
+  return d;
+}
+
+// ─── Encontrar PROXIMA ocorrencia apos "afterDate" ───
+function getNextOccurrence(rruleStr, dtstart, afterDate) {
+  const rrule = parseRRule(rruleStr);
+  const freq = (rrule.FREQ || '').toUpperCase();
+  const interval = parseInt(rrule.INTERVAL || '1', 10);
+  const count = rrule.COUNT ? parseInt(rrule.COUNT, 10) : null;
+  const byDay = rrule.BYDAY ? rrule.BYDAY.split(',').map(s => s.trim()) : null;
+  const byMonthDay = rrule.BYMONTHDAY ? rrule.BYMONTHDAY.split(',').map(Number) : null;
+  const byHour = rrule.BYHOUR !== undefined ? parseInt(rrule.BYHOUR, 10) : dtstart.getHours();
+  const byMinute = rrule.BYMINUTE !== undefined ? parseInt(rrule.BYMINUTE, 10) : dtstart.getMinutes();
+  const bySecond = rrule.BYSECOND !== undefined ? parseInt(rrule.BYSECOND, 10) : 0;
+
+  let untilDate = null;
+  if (rrule.UNTIL) untilDate = parseRRuleDate(rrule.UNTIL);
+
+  // Limite de seguranca: 2 anos no futuro
+  const maxDate = new Date(afterDate.getTime() + 2 * 365 * 24 * 60 * 60 * 1000);
+  const effectiveEnd = untilDate && untilDate < maxDate ? untilDate : maxDate;
+
+  let totalGen = 0;
+
+  if (freq === 'DAILY') {
+    let cur = new Date(dtstart.getTime());
+    while (cur <= effectiveEnd) {
+      if (count && totalGen >= count) return null;
+      cur.setHours(byHour, byMinute, bySecond, 0);
+      if (cur >= dtstart) {
+        totalGen++;
+        if (cur > afterDate) return cur;
+      }
+      cur = addDays(cur, interval);
+    }
+  }
+  else if (freq === 'WEEKLY') {
+    const targetDays = byDay ? byDay.map(d => DAY_MAP[d.replace(/[^A-Z]/g,'')]) : [dtstart.getDay()];
+    let wk = getMonday(dtstart);
+    while (wk <= effectiveEnd) {
+      if (count && totalGen >= count) return null;
+      for (const dayNum of targetDays) {
+        if (count && totalGen >= count) return null;
+        const o = getWeekdayInWeek(wk, dayNum);
+        o.setHours(byHour, byMinute, bySecond, 0);
+        if (o >= dtstart) {
+          totalGen++;
+          if (o > afterDate) return o;
+        }
+      }
+      wk = addDays(wk, 7 * interval);
+    }
+  }
+  else if (freq === 'MONTHLY') {
+    let cur = new Date(dtstart.getFullYear(), dtstart.getMonth(), 1);
+    while (cur <= effectiveEnd) {
+      if (count && totalGen >= count) return null;
+      const days = byMonthDay || [dtstart.getDate()];
+      for (const day of days) {
+        if (count && totalGen >= count) return null;
+        const last = new Date(cur.getFullYear(), cur.getMonth() + 1, 0).getDate();
+        if (day > last) continue;
+        const o = new Date(cur.getFullYear(), cur.getMonth(), day, byHour, byMinute, bySecond);
+        if (o >= dtstart) {
+          totalGen++;
+          if (o > afterDate) return o;
+        }
+      }
+      cur = addMonths(cur, interval);
+    }
+  }
+  else if (freq === 'YEARLY') {
+    let cur = new Date(dtstart.getTime());
+    while (cur <= effectiveEnd) {
+      if (count && totalGen >= count) return null;
+      if (cur >= dtstart) {
+        totalGen++;
+        if (cur > afterDate) return cur;
+      }
+      cur = new Date(cur.getFullYear() + interval, cur.getMonth(), cur.getDate(), byHour, byMinute, bySecond);
+    }
+  }
+
+  return null; // Sem proxima ocorrencia (rrule terminou)
+}
+
+// ─── EXECUTAR ───
+const dtstart = new Date(evt.start_event);
+const currentFire = evt.next_fire_at ? new Date(evt.next_fire_at) : now;
+
+const nextOcc = getNextOccurrence(evt.rrule, dtstart, currentFire);
+
+// Checar exdates
+let finalNext = nextOcc;
+if (finalNext && evt.exdates && Array.isArray(evt.exdates)) {
+  const exSet = new Set(evt.exdates.filter(Boolean).map(e => {
+    const d = new Date(e);
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  }));
+
+  // Se a proxima data esta nos exdates, pular para a seguinte
+  let attempts = 0;
+  while (finalNext && attempts < 100) {
+    const dk = `${finalNext.getFullYear()}-${String(finalNext.getMonth()+1).padStart(2,'0')}-${String(finalNext.getDate()).padStart(2,'0')}`;
+    if (!exSet.has(dk)) break;
+    finalNext = getNextOccurrence(evt.rrule, dtstart, finalNext);
+    attempts++;
+  }
+}
+
+// Checar repeats_until
+if (finalNext && evt.repeats_until) {
+  const ru = new Date(evt.repeats_until);
+  if (finalNext > ru) finalNext = null;
+}
+
+// Se nao tem proxima ocorrencia, desativar o evento
+if (!finalNext) {
+  return [{
+    json: {
+      id: evt.id,
+      next_fire_at: null,
+      last_fired_at: now.toISOString(),
+      active: false, // RRULE terminou, desativar
+      _action: 'deactivate'
+    }
+  }];
+}
+
+return [{
+  json: {
+    id: evt.id,
+    next_fire_at: finalNext.toISOString(),
+    last_fired_at: now.toISOString(),
+    active: true,
+    _action: 'advance'
+  }
+}];
+---FIM CODE AVANCAR---
+
+PASSO 1.4 - Supabase Update apos o Code
+
+Adicione um node Supabase (Update) conectado a saida do Code:
+
+  Node: Supabase (Update)
+  Name: "Avancar Recorrente"
+  Table: calendar
+  Match: id = {{ $json.id }}
+  Fields:
+    next_fire_at = {{ $json.next_fire_at }}
+    last_fired_at = {{ $json.last_fired_at }}
+    active = {{ $json.active }}
+
+Depois desse Update, conecte de volta ao Loop Over Items
+(para continuar processando os proximos items do batch).
+
+================================================================================
+CORRECAO DO PATH 2: EVENTS IN 30 MIN
+================================================================================
+
+MESMA LOGICA, adaptada:
+
+PASSO 2.1 - Adicionar query para recorrentes
+
+Ao lado do "Get Events (in 30 min)1", adicione:
+
+  Node: Supabase (Get All)
+  Name: "Get Recurring Events (30 min)"
+  Table: calendar
+  Return All: true
+  Filters:
+    reminder = FALSE (ou remover esse filtro)
+    is_recurring = TRUE
+    active = TRUE
+    next_fire_at > {{ $now }}
+    next_fire_at < {{ $now.plus({ minutes: 30 }) }}
+
+Conecte ao "Merge Due Items1" (input junto com o existente).
+
+PASSO 2.2 - Apos disparar, separar
+
+Depois do "HTTP Request — send agenda template",
+adicione IF:
+
+  {{ $('Merge Due Items1').item.json.is_recurring }} = true
+
+  TRUE  → Code "Avancar next_fire_at" (mesmo codigo!) → Supabase Update
+  FALSE → "Mark as Remembered1" (como ja esta)
+
+================================================================================
+RESUMO DO FLUXO CORRIGIDO (PATH 1)
+================================================================================
+
+Schedule (50s)
+  ├→ Get Reminders (due now) ────────────────→ Merge Due Items
+  └→ Get Recurring Reminders (next_fire_at) ─→ Merge Due Items
+                                                      ↓
+                                              Loop Over Items
+                                                      ↓
+                                                  Get a row (profile)
+                                                      ↓
+                                                  If plan_status
+                                                      ↓
+                                                  If reminder?
+                                                 ↙         ↘
+                                          text_phone1    text_phone2
+                                                 ↘         ↙
+                                                  text_phone
+                                                      ↓
+                                                  Get a row1 (re-check)
+                                                      ↓
+                                                  If not remembered?
+                                                      ↓
+                                              Send WhatsApp template
+                                                      ↓
+                                              If is_recurring? ──── NEW
+                                             ↙                  ↘
+                                   [Code: Avancar]        [Mark as Remembered]
+                                         ↓                       ↓
+                                [Supabase: Update]             Redis
+                                   next_fire_at                  ↓
+                                         ↓                   Loop back
+                                       Redis
+                                         ↓
+                                     Loop back
+
+================================================================================
+NOTA SOBRE due_at
+================================================================================
+
+A tabela tem um trigger "trg_calendar_due_at" que chama
+calendar_set_due_at() em INSERT/UPDATE.
+
+Para eventos recorrentes, esse trigger provavelmente seta due_at
+baseado no start_event original. Isso nao e problema porque:
+- Para recorrentes, usamos next_fire_at (nao due_at)
+- due_at continua sendo usado apenas para NAO recorrentes
+
+Se o trigger calendar_set_due_at() tambem atualizar next_fire_at
+de alguma forma, verifique para evitar conflito.

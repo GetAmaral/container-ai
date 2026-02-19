@@ -1,0 +1,156 @@
+================================================================================
+CORRECAO C: SETAR next_fire_at NA CRIACAO DE EVENTO RECORRENTE
+================================================================================
+
+Sem essa correcao, next_fire_at fica NULL e o cron de lembretes
+NUNCA vai encontrar o evento recorrente.
+
+================================================================================
+FLUXO: criar-lembrete-recorrente-total
+================================================================================
+
+Existem 2 nodes de INSERT no Supabase nesse fluxo:
+
+  1. "create_calendar_sup_google (rec)" - quando usuario tem Google
+  2. "create_calendar_sup_local (rec)"  - quando usuario nao tem Google
+
+Em AMBOS, adicione o campo:
+
+  fieldId: "next_fire_at"
+  fieldValue: {{ $('SET user_id (debug)1').item.json.start }}
+
+Isso seta next_fire_at = dtstart (primeira ocorrencia).
+
+================================================================================
+NODE: create_calendar_sup_google (rec)
+================================================================================
+
+Campos atuais:
+  event_name = ...
+  desc_event = ...
+  start_event = ...
+  end_event = ...
+  connect_google = TRUE
+  calendar_email_created = ...
+  user_id = ...
+  session_event_id_google = ...
+  reminder = TRUE
+  is_recurring = TRUE
+  rrule = ...
+  timezone = ...
+  remembered = FALSE
+
+ADICIONAR:
+  next_fire_at = {{ $('SET user_id (debug)1').item.json.start }}
+
+================================================================================
+NODE: create_calendar_sup_local (rec)
+================================================================================
+
+Campos atuais:
+  event_name = ...
+  desc_event = ...
+  start_event = ...
+  end_event = ...
+  connect_google = FALSE
+  user_id = ...
+  reminder = TRUE
+  is_recurring = TRUE
+  rrule = ...
+  timezone = ...
+  remembered = FALSE
+
+ADICIONAR:
+  next_fire_at = {{ $('SET user_id (debug)1').item.json.start }}
+
+================================================================================
+VERIFICACAO: TRIGGER calendar_set_due_at
+================================================================================
+
+A tabela tem um trigger:
+  trg_calendar_due_at BEFORE INSERT OR UPDATE → calendar_set_due_at()
+
+Esse trigger roda no INSERT e pode setar due_at automaticamente.
+
+IMPORTANTE: Verifique se calendar_set_due_at() interfere com
+next_fire_at. Se o trigger tambem modificar next_fire_at,
+voce precisa ajustar a funcao para NAO tocar em next_fire_at
+quando is_recurring = TRUE (deixar o fluxo controlar).
+
+Para verificar, rode no SQL Editor do Supabase:
+
+  SELECT prosrc FROM pg_proc WHERE proname = 'calendar_set_due_at';
+
+Se a funcao modificar next_fire_at, adicione no inicio:
+
+  IF NEW.is_recurring = TRUE THEN
+    -- Para recorrentes, next_fire_at e controlado pelo fluxo
+    -- Apenas setar due_at se necessario
+    RETURN NEW;
+  END IF;
+
+================================================================================
+VERIFICACAO: EVENTOS RECORRENTES JA EXISTENTES
+================================================================================
+
+Eventos recorrentes que ja foram criados ANTES dessa correcao
+terao next_fire_at = NULL.
+
+Para corrigi-los, rode no SQL Editor:
+
+  UPDATE calendar
+  SET next_fire_at = start_event
+  WHERE is_recurring = TRUE
+    AND active = TRUE
+    AND next_fire_at IS NULL;
+
+Isso seta next_fire_at para o start_event original.
+
+Se o start_event ja passou (a primeira ocorrencia ja foi),
+voce precisara calcular a proxima ocorrencia manualmente
+ou rodar um script que parse as RRULEs.
+
+Alternativa simples para eventos semanais que ja passaram
+o primeiro start_event:
+
+  -- Para cada evento recorrente ativo com next_fire_at no passado,
+  -- avance para a proxima semana (ajuste conforme FREQ)
+  UPDATE calendar
+  SET next_fire_at = start_event + INTERVAL '7 days' *
+    CEIL(EXTRACT(EPOCH FROM (NOW() - start_event)) / (7 * 86400))
+  WHERE is_recurring = TRUE
+    AND active = TRUE
+    AND next_fire_at IS NOT NULL
+    AND next_fire_at < NOW()
+    AND rrule LIKE '%FREQ=WEEKLY%';
+
+NOTA: Esse UPDATE e uma aproximacao para WEEKLY.
+Para DAILY, MONTHLY, YEARLY, ajuste o intervalo.
+Ou simplesmente rode o cron uma vez e ele vai avancar
+automaticamente (se o Code node "Avancar next_fire_at"
+ja estiver no fluxo).
+
+================================================================================
+FLUXO COMPLETO APOS TODAS AS CORRECOES
+================================================================================
+
+CRIACAO:
+  Webhook → ... → Supabase INSERT (com next_fire_at = dtstart)
+
+BUSCA:
+  Webhook → ... → Query normais + Query recorrentes
+                → Code: Expandir RRULE → Aggregate → ...
+
+LEMBRETES (Path 1 - Reminders):
+  Cron → Query normais (due_at) + Query recorrentes (next_fire_at)
+       → Merge → Loop → Profile → Send WhatsApp
+       → If recorrente?
+           TRUE  → Code: Proxima ocorrencia → Update next_fire_at
+           FALSE → Mark remembered = TRUE
+
+LEMBRETES (Path 2 - Events 30min):
+  Cron → Query normais (start_event) + Query recorrentes (next_fire_at)
+       → Merge → Loop → Profile → Send WhatsApp
+       → If recorrente?
+           TRUE  → Code: Proxima ocorrencia → Update next_fire_at
+           FALSE → Mark remembered = TRUE
