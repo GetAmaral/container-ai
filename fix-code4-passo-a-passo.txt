@@ -1,0 +1,42 @@
+FIX — CODE4 BUSCA DE EVENTOS (queryString vazia)
+==================================================
+
+BUG:
+O Code4 usava $json para ler start_event/end_event.
+Mas $json nesse ponto do fluxo e o resultado do "Send message"
+(WhatsApp), que retorna {messageId: "..."} — nao tem datas.
+
+Resultado: startRaw e endRaw = null, queryString = vazia,
+Supabase retorna TODOS os eventos do user sem filtro de data.
+
+FLUXO:
+  Edit Fields2 → criterios → Get a row2 → Send message → If1 → Code4
+                                            ^^^^^^^^^^
+                                            $json aqui = resposta WhatsApp
+
+CORRECAO:
+  Trocar $json por $('Edit Fields2').item.json
+  Que tem: { start_event, end_event, nome, descricao, user_id }
+
+==================================================
+PASSO A PASSO
+==================================================
+
+PASSO 1: No n8n, abra o workflow de busca de eventos
+
+PASSO 2: Abra o node "Code4"
+
+PASSO 3: Apague todo o codigo (Ctrl+A, Delete)
+
+PASSO 4: Cole o conteudo de fix-code4-busca-eventos.txt do GitHub
+
+PASSO 5: Salve e teste com o pinData
+
+RESULTADO ESPERADO (com as datas do pinData):
+  startRaw: "2026-02-23 00:00:00-03"
+  endRaw:   "2026-02-23 23:59:59-03"
+  startUtc: "2026-02-23T03:00:00Z"
+  endUtc:   "2026-02-24T02:59:59Z"
+  queryString: "start_event=lte.2026-02-24T02:59:59Z&end_event=gte.2026-02-23T03:00:00Z"
+
+Isso filtra apenas eventos do dia 23/02/2026 (no fuso -03).

@@ -1,0 +1,59 @@
+// ============================================================
+// Code4 CORRIGIDO — Busca de Eventos
+//
+// BUG: $json no Code4 era o resultado do Send message (WhatsApp),
+// nao os criterios de busca. startRaw/endRaw ficavam sempre null.
+//
+// FIX: Ler de $('Edit Fields2').item.json que tem os dados certos.
+// ============================================================
+
+// ============ LER CRITERIOS DO NODE CORRETO ============
+const criterio = $('Edit Fields2').item.json;
+
+const startRaw = criterio.start_event || null;
+const endRaw = criterio.end_event || null;
+
+// ============ CONFIG ============
+const COL_START = 'start_event';
+const COL_END   = 'end_event';
+
+// ============ NORMALIZAR DATAS ============
+function toPostgrestDate(raw) {
+  if (!raw) return null;
+  let s = String(raw).trim();
+  // "2026-02-23 00:00:00-03" → "2026-02-23T00:00:00-03:00"
+  s = s.replace(' ', 'T');
+  // "-03" → "-03:00"
+  s = s.replace(/([+-]\d{2})$/, '$1:00');
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return null;
+  // Retorna UTC sem milissegundos: "2026-02-23T03:00:00Z"
+  return d.toISOString().replace(/\.\d{3}Z$/, 'Z');
+}
+
+const startUtc = toPostgrestDate(startRaw);
+const endUtc   = toPostgrestDate(endRaw);
+
+// ============ QUERY STRING ============
+// Filtro por sobreposicao:
+//   start_event <= endUtc   (evento comeca antes do fim do periodo)
+//   end_event   >= startUtc (evento termina depois do inicio do periodo)
+const params = [];
+if (endUtc)   params.push(`${COL_START}=lte.${endUtc}`);
+if (startUtc) params.push(`${COL_END}=gte.${startUtc}`);
+
+const queryString = params.join('&');
+
+// ============ SAIDA ============
+return [{
+  json: {
+    queryString,
+    debug: {
+      criterio,
+      startRaw,
+      endRaw,
+      startUtc,
+      endUtc
+    }
+  }
+}];
