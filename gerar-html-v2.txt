@@ -1,0 +1,229 @@
+const webhookData = $('webhook-report').item.json;
+const body = webhookData.body || webhookData;
+
+const tipo = body.tipo || 'mensal';
+const label = body.label || '';
+const startPeriod = body.startDate || '';
+const endPeriod = body.endDate || '';
+
+const itemsSrc = $items('buscar-gastos');
+
+function round2(n) {
+  const x = Number(n ?? 0);
+  return Number.isFinite(x) ? Number(x.toFixed(2)) : 0;
+}
+
+function dISO(s) {
+  if (!s) return '';
+  const d = new Date(s);
+  if (isNaN(d)) return '';
+  const dia = String(d.getDate()).padStart(2, '0');
+  const mes = String(d.getMonth() + 1).padStart(2, '0');
+  const ano = d.getFullYear();
+  return `${dia}/${mes}/${ano}`;
+}
+
+function formatDateShortISO(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  const dia = String(d.getDate()).padStart(2, '0');
+  const mes = String(d.getMonth() + 1).padStart(2, '0');
+  const ano = d.getFullYear();
+  return `${dia}/${mes}/${ano}`;
+}
+
+let labelSaidas = 'Total de saídas:';
+let labelEntradas = 'Total de entradas:';
+let labelSaldo = 'Saldo:';
+
+if (tipo === 'semanal') {
+  labelSaidas = 'Saídas na semana:';
+  labelEntradas = 'Entradas na semana:';
+  labelSaldo = 'Saldo da semana:';
+}
+
+let periodoDatas = '';
+if (startPeriod && endPeriod) {
+  const inicio = formatDateShortISO(startPeriod);
+  const fim = formatDateShortISO(endPeriod);
+  if (inicio && fim) {
+    periodoDatas = `${inicio} a ${fim}`;
+  }
+}
+
+const regs = itemsSrc.map(it => ({
+  Data: dISO(it.json.date_spent),
+  Nome: it.json.name_spent ?? '',
+  Categoria: it.json.category_spent ?? '',
+  Transacao: String(it.json.transaction_type || '').toLowerCase(),
+  Valor: round2(it.json.value_spent)
+})).filter(r => !!r.Data);
+
+const saidas = regs.filter(r => r.Transacao === 'saida');
+const entradas = regs.filter(r => r.Transacao === 'entrada');
+
+const cmp = (a, b) => {
+  if (a.Data < b.Data) return -1;
+  if (a.Data > b.Data) return 1;
+  return (a.Nome || '').localeCompare(b.Nome || '', 'pt-BR', { sensitivity: 'base' });
+};
+
+saidas.sort(cmp);
+entradas.sort(cmp);
+
+const totalSaidas = round2(saidas.reduce((s, r) => s + (r.Valor || 0), 0));
+const totalEntradas = round2(entradas.reduce((s, r) => s + (r.Valor || 0), 0));
+const saldoFinal = round2(totalEntradas - totalSaidas);
+
+const logoUrl = 'https://totalassistente.com.br/assets/logo-default-DjWkKb4r.webp';
+
+function linhaTr(r) {
+  const cor = r.Transacao === 'saida' ? '#fff5f5' : '#f3faf3';
+  return `
+    <tr style="background:${cor};">
+      <td>${r.Data}</td>
+      <td>${r.Nome}</td>
+      <td>${r.Categoria}</td>
+      <td style="text-align:right;">R$ ${r.Valor.toFixed(2).replace('.', ',')}</td>
+    </tr>
+  `;
+}
+
+const linhasTabela = [...saidas, ...entradas].map(linhaTr).join('\n');
+
+const html = `
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<title>Relatório - Total Assistente</title>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    margin: 32px;
+    color: #333;
+  }
+  .header {
+    display: flex;
+    align-items: center;
+    margin-bottom: 32px;
+  }
+  .header img {
+    height: 40px;
+  }
+  .periodo {
+    text-align: left;
+    font-size: 22px;
+    font-weight: 700;
+    color: #111;
+    margin-bottom: 4px;
+  }
+  .periodo-datas {
+    font-size: 13px;
+    color: #888;
+    margin-bottom: 28px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  th {
+    text-align: left;
+    padding: 10px 8px;
+    border-bottom: 2px solid #222;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #666;
+  }
+  th:last-child {
+    text-align: right;
+  }
+  td {
+    padding: 8px;
+    border-bottom: 1px solid #eee;
+  }
+  .totais {
+    margin-top: 28px;
+    font-size: 14px;
+  }
+  .totais .linha {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    border-bottom: 1px solid #f0f0f0;
+  }
+  .totais .linha:last-child {
+    border-bottom: none;
+    padding-top: 10px;
+    font-size: 16px;
+  }
+  .positivo {
+    color: #0a7a00;
+    font-weight: 700;
+  }
+  .negativo {
+    color: #c00;
+    font-weight: 700;
+  }
+  .footer {
+    margin-top: 40px;
+    font-size: 10px;
+    text-align: center;
+    color: #aaa;
+  }
+</style>
+</head>
+<body>
+  <div class="header">
+    <img src="${logoUrl}" alt="Total Assistente" />
+  </div>
+
+  <div class="periodo">${label || 'Relatório'}</div>
+  <div class="periodo-datas">${periodoDatas}</div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Data</th>
+        <th>Nome</th>
+        <th>Categoria</th>
+        <th>Valor</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${linhasTabela || '<tr><td colspan="4" style="text-align:center;color:#aaa;padding:24px;">Nenhum lançamento no período.</td></tr>'}
+    </tbody>
+  </table>
+
+  <div class="totais">
+    <div class="linha">
+      <span>${labelSaidas}</span>
+      <span>R$ ${totalSaidas.toFixed(2).replace('.', ',')}</span>
+    </div>
+    <div class="linha">
+      <span>${labelEntradas}</span>
+      <span>R$ ${totalEntradas.toFixed(2).replace('.', ',')}</span>
+    </div>
+    <div class="linha">
+      <span>${labelSaldo}</span>
+      <span class="${saldoFinal >= 0 ? 'positivo' : 'negativo'}">
+        R$ ${saldoFinal.toFixed(2).replace('.', ',')}
+      </span>
+    </div>
+  </div>
+
+  <div class="footer">
+    Total Assistente
+  </div>
+</body>
+</html>
+`;
+
+return [{
+  json: {
+    html
+  }
+}];
