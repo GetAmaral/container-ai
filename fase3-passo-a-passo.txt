@@ -1,0 +1,50 @@
+FASE 3 — WA-CONNECT POS-CONEXAO
+=================================
+
+PROBLEMA:
+Apos o OAuth callback, a function salva os tokens mas NAO
+dispara sync inicial nem configura webhook.
+Usuarios conectados via WhatsApp ficam sem eventos ate o cron rodar.
+
+CORRECAO:
+Adicionado bloco EdgeRuntime.waitUntil apos salvar conexao.
+Chama google-calendar com action=cron-sync + renewWebhook=true.
+Isso sincroniza eventos + configura webhook, tudo em background.
+
+O QUE NAO MUDOU:
+- Fluxo OAuth (auth, callback, state encoding)
+- Armazenamento criptografado de tokens (store_google_connection)
+- Busca de email (userinfo)
+- Redirect pro WhatsApp
+- Link curto
+- Actions status e disconnect
+- Pagina de erro HTML
+
+=================================
+PASSO A PASSO
+=================================
+
+PASSO 1: Supabase Dashboard > Edge Functions > google-calendar-wa-connect
+
+PASSO 2: Editar o codigo
+  - Ctrl+A, Delete (apaga tudo)
+  - Copie o conteudo de fase3-wa-connect.ts do GitHub
+  - Cole (Ctrl+V)
+  - Deploy
+
+PASSO 3: Verificar que ficou ACTIVE
+
+=================================
+COMO TESTAR
+=================================
+
+1. Desconecte o Google Calendar de um user de teste
+   (pode usar action=disconnect ou via dashboard)
+2. Reconecte via WhatsApp flow (peca pro bot conectar)
+3. Apos o callback (redirect pro WhatsApp), verifique:
+   - Nos logs da edge function: "Disparando sync inicial"
+   - Na tabela google_calendar_connections: webhook_id preenchido
+   - Na tabela calendar: eventos do Google apareceram
+
+=================================
+PROXIMO: me avise para a Fase 4
