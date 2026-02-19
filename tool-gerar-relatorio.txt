@@ -1,0 +1,107 @@
+NODE N8N: tool gerar_relatorio (httpRequestTool)
+Substitui: relatorios_semanais + relatorios_mensais
+════════════════════════════════════════════════════
+
+CONFIGURAÇÃO DO NODE:
+
+  Name:            gerar_relatorio
+  Type:            n8n-nodes-base.httpRequestTool
+  TypeVersion:     4.2
+  Method:          GET (padrão)
+  URL:             https://totalassistente.com.br/webhook/report
+  Authentication:  genericCredentialType → httpBasicAuth → Avelum Credential
+
+  Tool Description:
+  "Você PRECISA OBRIGATORIAMENTE utilizar essa tool para gerar relatórios financeiros. Funciona para relatórios semanais, mensais e personalizados."
+
+  Send Body: true
+
+  Body Parameters:
+  ┌─────────────┬──────────────────────────────────────────────────────────────────────┐
+  │ name        │ value                                                                │
+  ├─────────────┼──────────────────────────────────────────────────────────────────────┤
+  │ user_id     │ ={{ $('setar_user').item.json.id_user }}                             │
+  ├─────────────┼──────────────────────────────────────────────────────────────────────┤
+  │ startDate   │ ={{ $fromAI('startDate', `Data de início no formato                 │
+  │             │   YYYY-MM-DDTHH:mm:ss-03:00, sempre com T00:00:00-03:00`,           │
+  │             │   'string') }}                                                       │
+  ├─────────────┼──────────────────────────────────────────────────────────────────────┤
+  │ endDate     │ ={{ $fromAI('endDate', `Data de fim no formato                      │
+  │             │   YYYY-MM-DDTHH:mm:ss-03:00, sempre com T23:59:59-03:00`,           │
+  │             │   'string') }}                                                       │
+  ├─────────────┼──────────────────────────────────────────────────────────────────────┤
+  │ tipo        │ ={{ $fromAI('tipo', `Tipo do relatório: semanal, mensal              │
+  │             │   ou personalizado`, 'string') }}                                    │
+  ├─────────────┼──────────────────────────────────────────────────────────────────────┤
+  │ label       │ ={{ $fromAI('label', `Descrição curta do período em português,      │
+  │             │   ex: Fevereiro de 2026, Semana passada, 10/11 a 25/11/2025`,       │
+  │             │   'string') }}                                                       │
+  └─────────────┴──────────────────────────────────────────────────────────────────────┘
+
+════════════════════════════════════════════════════
+JSON DO NODE (copiar direto no n8n):
+════════════════════════════════════════════════════
+
+{
+  "parameters": {
+    "toolDescription": "Você PRECISA OBRIGATORIAMENTE utilizar essa tool para gerar relatórios financeiros. Funciona para relatórios semanais, mensais e personalizados.",
+    "url": "https://totalassistente.com.br/webhook/report",
+    "authentication": "genericCredentialType",
+    "genericAuthType": "httpBasicAuth",
+    "sendBody": true,
+    "bodyParameters": {
+      "parameters": [
+        {
+          "name": "user_id",
+          "value": "={{ $('setar_user').item.json.id_user }}"
+        },
+        {
+          "name": "startDate",
+          "value": "={{ $fromAI('startDate', `Data de início no formato YYYY-MM-DDTHH:mm:ss-03:00, sempre com T00:00:00-03:00`, 'string') }}"
+        },
+        {
+          "name": "endDate",
+          "value": "={{ $fromAI('endDate', `Data de fim no formato YYYY-MM-DDTHH:mm:ss-03:00, sempre com T23:59:59-03:00`, 'string') }}"
+        },
+        {
+          "name": "tipo",
+          "value": "={{ $fromAI('tipo', `Tipo do relatório: semanal, mensal ou personalizado`, 'string') }}"
+        },
+        {
+          "name": "label",
+          "value": "={{ $fromAI('label', `Descrição curta do período em português, ex: Fevereiro de 2026, Semana passada, 10/11 a 25/11/2025`, 'string') }}"
+        }
+      ]
+    },
+    "options": {}
+  },
+  "type": "n8n-nodes-base.httpRequestTool",
+  "typeVersion": 4.2,
+  "position": [1936, 2336],
+  "id": "gerar-relatorio-tool-001",
+  "name": "gerar_relatorio",
+  "credentials": {
+    "httpBasicAuth": {
+      "id": "fSx1ApZPcITxgUNE",
+      "name": "Avelum Credential"
+    }
+  }
+}
+
+════════════════════════════════════════════════════
+O QUE MUDAR NO MAIN WORKFLOW:
+════════════════════════════════════════════════════
+
+1. Deletar os nodes: relatorios_semanais + relatorios_mensais
+2. Criar este node (gerar_relatorio) e conectar como ai_tool do agent
+3. Deletar os nodes de prompt: prompt_rel_semanal + prompt_rel_mensal
+4. Criar um node Set "prompt_gerar_relatorio" com o conteúdo do arquivo prompt-gerar-relatorio-v1.txt
+5. No Switch/Router que direciona os branches, o branch "gerar_relatorio" aponta para esse novo prompt
+
+════════════════════════════════════════════════════
+WEBHOOK QUE PRECISA EXISTIR (próximo passo):
+════════════════════════════════════════════════════
+
+A URL https://totalassistente.com.br/webhook/report ainda não existe.
+Próximo passo é criar o report workflow unificado que recebe:
+{ user_id, startDate, endDate, tipo, label }
