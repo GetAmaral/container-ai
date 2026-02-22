@@ -1,0 +1,318 @@
+================================================================================
+  FEATURE: RESUMO DE ÁUDIO TRANSCRITO VIA BOTÃO INTERATIVO NO WHATSAPP
+  Total Assistente — n8n + Redis + WhatsApp Cloud API
+================================================================================
+
+VISÃO GERAL
+------------
+Após transcrever um áudio, o sistema envia a transcrição + um botão interativo
+"Resuma para mim". Ao clicar, o user recebe um resumo gerado por IA.
+
+Armazenamento temporário: Redis (key por telefone, com TTL).
+
+IMPORTANTE: A transcrição é enviada como mensagem de texto normal (limite 4096
+chars) e o botão é enviado em uma SEGUNDA mensagem interativa separada. Isso
+evita o limite de 1024 caracteres do body de mensagens interativas.
+
+
+================================================================================
+PARTE 1 — ALTERAÇÕES NO FLUXO DE TRANSCRIÇÃO (já existente)
+================================================================================
+
+Atualmente o fluxo é:
+  Get Media Info1 → Download File1 → Transcribe a recording → Send message2
+
+Novo fluxo:
+  Get Media Info1 → Download File1 → Transcribe a recording
+    → Redis SET (salvar transcrição)
+    → Send message2 (transcrição em texto normal — manter como está)
+    → HTTP Request (enviar botão interativo)
+
+
+--- NÓ 1: Redis SET (após "Transcribe a recording") ---
+
+Tipo: n8n-nodes-base.redis
+Operação: Set
+Parâmetros:
+  - Key:    transcricao:{{ $('trigger-whatsapp').item.json.contacts[0].wa_id }}
+  - Value:  {{ $json.text }}
+  - Expire: true
+  - TTL:    3600   (1 hora — a transcrição expira sozinha)
+
+Credenciais: configurar conexão Redis (host, porta, senha se houver).
+Se estiver usando Docker, o Redis pode rodar como container ao lado do n8n.
+
+
+--- NÓ 2: Manter "Send message2" como está ---
+
+Ele envia a transcrição completa como texto. Sem alteração.
+
+
+--- NÓ 3: HTTP Request — Enviar botão interativo (após "Send message2") ---
+
+Tipo: n8n-nodes-base.httpRequest
+Method: POST
+URL: https://graph.facebook.com/v23.0/744582292082931/messages
+Auth: genericCredentialType → httpHeaderAuth (WhatsApp Header Auth)
+Headers:
+  Content-Type: application/json
+
+Body (JSON):
+{
+  "messaging_product": "whatsapp",
+  "to": "{{ $('trigger-whatsapp').item.json.contacts[0].wa_id }}",
+  "type": "interactive",
+  "interactive": {
+    "type": "button",
+    "body": {
+      "text": "Deseja um resumo desse áudio?"
+    },
+    "action": {
+      "buttons": [
+        {
+          "type": "reply",
+          "reply": {
+            "id": "btn_resumir",
+            "title": "Resuma para mim"
+          }
+        }
+      ]
+    }
+  }
+}
+
+NOTAS sobre botões interativos do WhatsApp:
+  - Máximo 3 botões por mensagem
+  - Título do botão: máximo 20 caracteres ("Resuma para mim" = 16 chars, OK)
+  - Body: máximo 1024 caracteres (por isso enviamos a transcrição separada)
+  - type do botão DEVE ser "reply"
+
+
+================================================================================
+PARTE 2 — CAPTURAR O CLIQUE DO BOTÃO
+================================================================================
+
+IMPORTANTE: Quando o user clica num botão interativo (reply button), o webhook
+do WhatsApp envia um payload DIFERENTE de mensagens de texto ou template buttons.
+
+O payload de clique de botão interativo vem assim:
+
+{
+  "messages": [
+    {
+      "from": "554391269103",
+      "type": "interactive",           ← tipo é "interactive", NÃO "button"
+      "interactive": {
+        "type": "button_reply",
+        "button_reply": {
+          "id": "btn_resumir",          ← o ID que definimos
+          "title": "Resuma para mim"    ← o título que definimos
+        }
+      }
+    }
+  ]
+}
+
+Isso é diferente de template buttons, onde o campo é messages[0].button.text.
+
+
+--- ALTERAÇÃO NO NÓ "Edit Fields" ---
+
+Atualizar a expressão do campo "messageSet" para capturar TAMBÉM botões
+interativos:
+
+EXPRESSÃO ATUAL:
+  {{ $json.messages[0].button?.text || $json.messages[0].text?.body }}
+
+NOVA EXPRESSÃO:
+  {{ $json.messages[0].interactive?.button_reply?.title || $json.messages[0].button?.text || $json.messages[0].text?.body }}
+
+Ordem de prioridade:
+  1. interactive.button_reply.title  → clique de botão interativo (reply button)
+  2. button.text                     → clique de botão de template
+  3. text.body                       → mensagem de texto normal
+
+
+================================================================================
+PARTE 3 — IF PARA DETECTAR PEDIDO DE RESUMO
+================================================================================
+
+Adicionar um nó IF ENTRE "Edit Fields" e "If3".
+
+Novo fluxo:
+  Edit Fields → IF (é pedido de resumo?)
+    ├─ TRUE:  fluxo de resumo (Parte 4)
+    └─ FALSE: If3 (fluxo normal existente, sem alteração)
+
+--- NÓ: IF — Verificar pedido de resumo ---
+
+Tipo: n8n-nodes-base.if
+Condição:
+  Left Value:  {{ $json.messageSet }}
+  Operação:    equals
+  Right Value: Resuma para mim
+
+Saída TRUE  → vai para o fluxo de resumo (Parte 4)
+Saída FALSE → vai para o nó "If3" existente (fluxo normal continua)
+
+ALTERNATIVA MAIS ROBUSTA (recomendada):
+  Em vez de comparar o título do botão, comparar o ID do botão.
+  Left Value:  {{ $('trigger-whatsapp').item.json.messages[0].interactive?.button_reply?.id }}
+  Operação:    equals
+  Right Value: btn_resumir
+
+  Isso evita problemas se o título do botão mudar no futuro.
+
+
+================================================================================
+PARTE 4 — FLUXO DE RESUMO (branch TRUE do IF acima)
+================================================================================
+
+Sequência:
+  IF (TRUE) → Redis GET → IF (tem transcrição?) → OpenAI (resumir) → Send WhatsApp
+
+--- NÓ 1: Redis GET ---
+
+Tipo: n8n-nodes-base.redis
+Operação: Get
+Parâmetros:
+  - Key: transcricao:{{ $('trigger-whatsapp').item.json.contacts[0].wa_id }}
+
+A key é a mesma usada no SET — o telefone do user.
+O valor retornado estará em {{ $json.data }} (campo padrão do nó Redis GET).
+
+
+--- NÓ 2: IF — Verificar se existe transcrição ---
+
+Tipo: n8n-nodes-base.if
+Condição:
+  Left Value:  {{ $json.data }}
+  Operação:    is not empty
+
+Saída TRUE  → tem transcrição, continuar para resumo
+Saída FALSE → não tem transcrição (expirou ou nunca houve), enviar mensagem
+              de aviso: "Não encontrei nenhum áudio recente para resumir."
+
+
+--- NÓ 3: OpenAI — Gerar resumo (saída TRUE do IF acima) ---
+
+Tipo: @n8n/n8n-nodes-langchain.openAi
+Operação: message (chat completion)
+Parâmetros:
+  - Model: gpt-4o-mini (rápido e barato, suficiente para resumo)
+  - Prompt/Messages:
+      System: "Você é um assistente que resume textos de forma clara e concisa em português brasileiro. Resuma o texto mantendo os pontos principais."
+      User: {{ $json.data }}
+  - Max Tokens: 500 (resumo não precisa ser longo)
+  - Temperature: 0.3 (mais focado, menos criativo)
+
+Credenciais: a mesma OpenAi account já configurada no workflow.
+
+O resumo estará em {{ $json.message.content }} ou {{ $json.text }} dependendo
+da versão do nó (verificar na execução de teste).
+
+
+--- NÓ 4: WhatsApp — Enviar resumo ---
+
+Tipo: n8n-nodes-base.whatsApp
+Operação: send
+Parâmetros:
+  - Phone Number ID: 744582292082931
+  - Recipient: +{{ $('trigger-whatsapp').item.json.contacts[0].wa_id }}
+  - Text Body:
+
+    *Resumo do áudio:*
+
+    {{ $json.message.content }}
+
+    _— Resumido por *Total Assistente*, sua IA pessoal_
+
+Credenciais: WhatsApp account 2 (mesma já usada).
+
+
+--- NÓ 5: WhatsApp — Sem transcrição (saída FALSE do IF de verificação) ---
+
+Tipo: n8n-nodes-base.whatsApp
+Operação: send
+Parâmetros:
+  - Phone Number ID: 744582292082931
+  - Recipient: +{{ $('trigger-whatsapp').item.json.contacts[0].wa_id }}
+  - Text Body: Não encontrei nenhum áudio recente para resumir. Envie um áudio primeiro!
+
+
+================================================================================
+VISÃO GERAL DO FLUXO COMPLETO (APÓS ALTERAÇÕES)
+================================================================================
+
+trigger-whatsapp
+  → Edit Fields (atualizado para capturar interactive.button_reply.title)
+    → IF (messageSet == "Resuma para mim"?)
+        │
+        ├─ TRUE (pedido de resumo):
+        │   → Redis GET (buscar transcrição pelo telefone)
+        │   → IF (transcrição existe?)
+        │       ├─ TRUE:  OpenAI resumir → Enviar resumo via WhatsApp
+        │       └─ FALSE: Enviar "Não encontrei áudio recente"
+        │
+        └─ FALSE (fluxo normal):
+            → If3 (encaminhado/áudio?)
+                ├─ TRUE (áudio encaminhado):
+                │   → Get Media Info1 → Download → Transcribe
+                │   → Redis SET (salvar transcrição)
+                │   → Send message2 (transcrição completa)
+                │   → HTTP Request (botão "Resuma para mim")
+                │
+                └─ FALSE (texto normal):
+                    → Get a row → If8 → If9 → setar_user → Send message
+                      (fluxo de classificação e processamento normal)
+
+
+================================================================================
+PRÉ-REQUISITOS
+================================================================================
+
+1. REDIS
+   - Necessário um servidor Redis acessível pelo n8n
+   - Se usa Docker, adicionar ao docker-compose:
+
+     redis:
+       image: redis:7-alpine
+       ports:
+         - "6379:6379"
+       volumes:
+         - redis_data:/data
+
+   - Criar credencial Redis no n8n:
+       Host: redis (se estiver no mesmo docker-compose) ou localhost
+       Port: 6379
+
+2. CREDENCIAIS (já existentes, sem alteração)
+   - WhatsApp Header Auth (para HTTP Requests diretos à Graph API)
+   - WhatsApp account 2 (para nós nativos do WhatsApp)
+   - OpenAi account (para transcrição e resumo)
+
+3. TESTAR
+   - Enviar um áudio pelo WhatsApp
+   - Verificar se a transcrição chega + botão aparece
+   - Clicar no botão
+   - Verificar se o resumo chega
+   - Esperar 1 hora e clicar novamente → deve receber "Não encontrei áudio"
+
+
+================================================================================
+NOTAS TÉCNICAS
+================================================================================
+
+- O campo do webhook para reply buttons é messages[0].interactive.button_reply,
+  NÃO messages[0].button. O campo button é para template quick replies.
+
+- O TTL de 3600s (1 hora) no Redis é uma sugestão. Ajustar conforme necessidade.
+  Se quiser manter por mais tempo, usar 86400 (24 horas).
+
+- O Redis SET com a mesma key sobrescreve o valor anterior. Ou seja, apenas o
+  ÚLTIMO áudio transcrito fica salvo, que é o comportamento desejado.
+
+- Se o n8n reiniciar, o Redis mantém os dados (se configurado com persistência
+  ou volume Docker).
+
+- gpt-4o-mini é suficiente para resumos. Não precisa de gpt-4o para essa tarefa.
