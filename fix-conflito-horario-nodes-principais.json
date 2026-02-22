@@ -1,0 +1,788 @@
+{
+  "name": "Fix Conflito - Nodes para Workflow Principal (Caller)",
+  "descricao": "Estes nodes devem ser adicionados/substituídos no workflow principal que chama o webhook de criação. A detecção de conflito foi REMOVIDA do webhook e MOVIDA para cá, executando UMA ÚNICA VEZ após todos os eventos do batch serem criados.",
+  "nodes": [
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://totalassistente.com.br/webhook/5e0f5e77-aea5-4784-8a85-58e8eaf49c30",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "nome_evento",
+              "value": "={{ $json.tool.nome_evento }}"
+            },
+            {
+              "name": "descricao_evento",
+              "value": "={{ $json.tool.descricao_evento }}"
+            },
+            {
+              "name": "data_inicio_evento",
+              "value": "={{ $json.tool.data_inicio_evento }}"
+            },
+            {
+              "name": "data_fim_evento",
+              "value": "={{ $json.tool.data_fim_evento }}"
+            },
+            {
+              "name": "id_user",
+              "value": "={{ $('setar_user').item.json.id_user }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [3312, 1056],
+      "id": "911ae6e5-f04a-42bc-b4a6-b99387d04f6d",
+      "name": "HTTP - Create Calendar Tool",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "fSx1ApZPcITxgUNE",
+          "name": "Avelum Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Code node (n8n) - formatar data de cada evento\nconst origem = $items(\"Code in JavaScript\", 0, 0);\n\nreturn $input.all().map((item, index) => {\n  const base = origem[index]?.json || {};\n  const evento = base.tool || {};\n\n  const isoString = String(evento.data_inicio_evento || '');\n\n  if (!isoString) {\n    return {\n      json: {\n        ...item.json,\n        data_inicio_evento_formatado: null,\n        erro_formatacao_data: 'data_inicio_evento não encontrada'\n      }\n    };\n  }\n\n  const [datePart, timeWithOffset] = isoString.split('T');\n  const [year, month, day] = datePart.split('-');\n  const [timePart] = timeWithOffset.split(/[+-]/);\n  const [hour, minute] = timePart.split(':');\n  const dataFormatada = `${day}/${month}/${year}, às ${hour}h${minute}min`;\n\n  return {\n    json: {\n      ...item.json,\n      data_inicio_evento_formatado: dataFormatada,\n      nome_evento: evento.nome_evento || '',\n      data_inicio_evento: evento.data_inicio_evento || '',\n      data_fim_evento: evento.data_fim_evento || ''\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3312, 1376],
+      "id": "9fba8a1e-9e63-4dd2-a962-e923987540fb",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "4873681b-8241-4ea3-bb5f-ac55db43dcee",
+              "leftValue": "={{ $('Switch2').item.json.parsed_output.tool }}",
+              "rightValue": 1,
+              "operator": {
+                "type": "array",
+                "operation": "lengthEquals",
+                "rightType": "number"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [3488, 1376],
+      "id": "ab4eadbf-a090-41ce-bc63-8f08ff4f5224",
+      "name": "If7"
+    },
+
+    {
+      "_comentario": "=== PATH EVENTO ÚNICO (If7 = TRUE) === Cria o evento via webhook, depois faz debounce, depois verifica conflito UMA VEZ",
+
+      "parameters": {
+        "operation": "get",
+        "propertyName": "Lista",
+        "key": "={{ $('Evolution API- Take all').item.json.phone }}_debounce",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [3936, 1168],
+      "id": "4e172683-d3c6-4250-9b6a-962cd14a74d9",
+      "name": "lastGet3",
+      "credentials": {
+        "redis": {
+          "id": "amNI4dVfk3J8Bz0v",
+          "name": "Redis Germany"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "87e14226-bac1-4dd1-8c86-bd5bc02b17d6",
+              "leftValue": "={{ $('lastGet3').item.json.Lista.length }}",
+              "rightValue": "={{ $('firstGet').item.json.Lista.length }}",
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "ef168b18-85fd-4c76-86f6-5324d5a92ec4",
+              "leftValue": "={{ $itemIndex }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [4064, 1168],
+      "id": "f9a0fd23-661f-49f2-aff4-4dd54690b56e",
+      "name": "If2"
+    },
+    {
+      "parameters": {
+        "operation": "delete",
+        "key": "={{ $('Evolution API- Take all').item.json.phone }}_debounce"
+      },
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [4256, 1136],
+      "id": "badfe2da-0d6d-4bfc-b0f7-14486ccb141e",
+      "name": "Redis2",
+      "credentials": {
+        "redis": {
+          "id": "amNI4dVfk3J8Bz0v",
+          "name": "Redis Germany"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [4224, 1296],
+      "id": "57f127b4-80d0-456f-b63c-a7367530e122",
+      "name": "No Operation, do nothing4"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://totalassistente.com.br/webhook/5e0f5e77-aea5-4784-8a85-58e8eaf49c30",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "nome_evento",
+              "value": "={{ $('Switch2').item.json.tool.nome_evento }}"
+            },
+            {
+              "name": "descricao_evento",
+              "value": "={{ $('Switch2').item.json.tool.descricao_evento }}"
+            },
+            {
+              "name": "data_inicio_evento",
+              "value": "={{ $('Switch2').item.json.tool.data_inicio_evento }}"
+            },
+            {
+              "name": "data_fim_evento",
+              "value": "={{ $('Switch2').item.json.tool.data_fim_evento }}"
+            },
+            {
+              "name": "id_user",
+              "value": "={{ $('setar_user').item.json.id_user }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [4416, 1152],
+      "id": "d0ac688d-1ad9-4686-815c-0b11172c2505",
+      "name": "HTTP - Create Calendar Tool2",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "fSx1ApZPcITxgUNE",
+          "name": "Avelum Credential"
+        }
+      }
+    },
+
+    {
+      "_comentario": "=== NOVO NODE: Verificar conflitos APÓS criar evento único ===",
+
+      "parameters": {
+        "jsCode": "// Verifica conflitos para evento ÚNICO após criação\n// Busca no Supabase eventos que se sobrepõem ao horário,\n// excluindo o evento que acabou de ser criado.\n\nconst tool = $('Switch2').item.json.tool || $('Switch2').item.json.parsed_output?.tool?.[0] || {};\nconst userId = $('setar_user').item.json.id_user;\nconst startEvento = tool.data_inicio_evento;\nconst endEvento = tool.data_fim_evento;\nconst nomeEvento = tool.nome_evento;\n\n// O evento recém-criado retornado pelo webhook\nconst eventoCriado = $('HTTP - Create Calendar Tool2').item.json;\nconst idCriado = eventoCriado?.evento_id_criado || eventoCriado?.id || null;\n\n// Query Supabase para eventos sobrepostos\nconst supabaseUrl = 'https://ldbdtakddxznfridsarn.supabase.co';\nconst resp = await this.helpers.httpRequest({\n  method: 'GET',\n  url: `${supabaseUrl}/rest/v1/calendar`,\n  qs: {\n    'user_id': `eq.${userId}`,\n    'start_event': `lt.${endEvento}`,\n    'end_event': `gt.${startEvento}`,\n    'select': 'id,event_name,start_event,end_event'\n  },\n  headers: {\n    'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9',\n    'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9'\n  }\n});\n\n// Filtra: remove o próprio evento recém-criado\nconst conflitos = (Array.isArray(resp) ? resp : [])\n  .filter(e => String(e.id) !== String(idCriado));\n\nif (conflitos.length === 0) {\n  return [{ json: { tem_conflito: false, mensagem_conflito: null } }];\n}\n\n// Monta mensagem consolidada\nconst listaConflitos = conflitos.map(c => {\n  const dt = c.start_event ? c.start_event.split('T') : [''];\n  return `- ${c.event_name || '(sem nome)'} (${dt[0]})`;\n}).join('\\n');\n\nreturn [{\n  json: {\n    tem_conflito: true,\n    quantidade_conflitos: conflitos.length,\n    mensagem_conflito: `⚠️ Atenção: o evento \"${nomeEvento}\" tem ${conflitos.length} evento(s) no mesmo horário:\\n${listaConflitos}`,\n    conflitos_detalhes: conflitos\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4608, 1152],
+      "id": "conflito-check-unico-001",
+      "name": "Verificar Conflitos (Único)"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "conflito-if-unico",
+              "leftValue": "={{ $json.tem_conflito }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [4800, 1152],
+      "id": "conflito-if-unico-001",
+      "name": "Tem Conflito? (Único)"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v23.0/744582292082931/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  messaging_product: 'whatsapp',\n  to: $('premium').item.json.body.user_phone,\n  type: 'template',\n  template: {\n    name: 'novo_evento_do_usuario',\n    language: { code: 'pt_BR' },\n    components: [\n      {\n        type: 'body',\n        parameters: [\n          { type: 'text', text: String( $('Switch2').item.json.parsed_output.tool[0].nome_evento  || '') }, \n          { type: 'text', text: String($('Code in JavaScript1').item.json.data_inicio_evento_formatado || '')  }\n        ]\n      }\n    ]\n  }\n} }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [5008, 1056],
+      "id": "d1897201-b067-445f-9e1d-dea9aa4d357b",
+      "name": "HTTP Request - Template WhatsApp",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "TDDrQvr1s0RxXTTC",
+          "name": "WhatsApp Header Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "744582292082931",
+        "recipientPhoneNumber": "=+{{ $('premium').item.json.body.user_phone }}",
+        "textBody": "={{ $('Verificar Conflitos (Único)').item.json.mensagem_conflito }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [5200, 1056],
+      "id": "aviso-conflito-unico-001",
+      "name": "Aviso Conflito (Único)",
+      "webhookId": "f5115870-a475-4765-856e-b711b849aabd",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "j0RGyMFfqZfWpCBu",
+          "name": "WhatsApp account 2"
+        }
+      }
+    },
+
+    {
+      "_comentario": "=== PATH MÚLTIPLOS EVENTOS (If7 = FALSE) === Cria todos, agrega, depois verifica conflitos UMA VEZ",
+
+      "parameters": {
+        "method": "POST",
+        "url": "https://totalassistente.com.br/webhook/5e0f5e77-aea5-4784-8a85-58e8eaf49c30",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "nome_evento",
+              "value": "={{ $('Switch2').item.json.tool.nome_evento }}"
+            },
+            {
+              "name": "descricao_evento",
+              "value": "={{ $('Switch2').item.json.tool.descricao_evento }}"
+            },
+            {
+              "name": "data_inicio_evento",
+              "value": "={{ $('Switch2').item.json.tool.data_inicio_evento }}"
+            },
+            {
+              "name": "data_fim_evento",
+              "value": "={{ $('Switch2').item.json.tool.data_fim_evento }}"
+            },
+            {
+              "name": "id_user",
+              "value": "={{ $('setar_user').item.json.id_user }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [3632, 1520],
+      "id": "71e5f0c3-b2a7-41ed-be0f-49c62738dc8d",
+      "name": "HTTP - Create Calendar Tool1",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "fSx1ApZPcITxgUNE",
+          "name": "Avelum Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [3760, 1520],
+      "id": "57a82bf5-e91f-44b4-a9b5-28dcb3fb4b5a",
+      "name": "Aggregate1"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "propertyName": "Lista",
+        "key": "={{ $('Evolution API- Take all').item.json.phone }}_debounce",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [3904, 1536],
+      "id": "58b0d80e-0658-4152-a8b8-69c575f6db34",
+      "name": "lastGet6",
+      "credentials": {
+        "redis": {
+          "id": "amNI4dVfk3J8Bz0v",
+          "name": "Redis Germany"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "87e14226-bac1-4dd1-8c86-bd5bc02b17d6",
+              "leftValue": "={{ $('lastGet6').item.json.Lista.length }}",
+              "rightValue": "={{ $('firstGet').item.json.Lista.length }}",
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [4096, 1600],
+      "id": "e1b7dea0-599f-4227-a4ee-5bb7bfca5d96",
+      "name": "If6"
+    },
+    {
+      "parameters": {
+        "operation": "delete",
+        "key": "={{ $('Evolution API- Take all').item.json.phone }}_debounce"
+      },
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [4240, 1472],
+      "id": "746b9f9b-026d-4934-91b6-0aaa92513c0f",
+      "name": "Redis7",
+      "credentials": {
+        "redis": {
+          "id": "amNI4dVfk3J8Bz0v",
+          "name": "Redis Germany"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [4224, 1616],
+      "id": "ce9cfc5f-ba6a-4c4a-b82a-581cbc05c906",
+      "name": "No Operation, do nothing7"
+    },
+
+    {
+      "_comentario": "=== NOVO NODE: Verificar conflitos APÓS criar TODOS os eventos do batch ===",
+
+      "parameters": {
+        "jsCode": "// Verifica conflitos CONSOLIDADOS para batch de múltiplos eventos\n// Executa UMA ÚNICA VEZ após todos os eventos serem criados\n// Exclui os eventos do próprio batch da contagem de conflitos\n\nconst toolArray = $('Switch2').item.json.parsed_output?.tool || [];\nconst userId = $('setar_user').item.json.id_user;\n\n// Coleta IDs dos eventos recém-criados neste batch\n// (retornados pelo webhook de criação)\nconst itensCriados = $('HTTP - Create Calendar Tool1').all();\nconst idsCriados = itensCriados\n  .map(i => String(i.json?.evento_id_criado || i.json?.id || ''))\n  .filter(id => id && id !== 'undefined');\n\nconst supabaseUrl = 'https://ldbdtakddxznfridsarn.supabase.co';\nconst conflitosGerais = [];\n\nfor (const evento of toolArray) {\n  const startEvento = evento.data_inicio_evento;\n  const endEvento = evento.data_fim_evento;\n  const nomeEvento = evento.nome_evento;\n\n  if (!startEvento || !endEvento) continue;\n\n  try {\n    const resp = await this.helpers.httpRequest({\n      method: 'GET',\n      url: `${supabaseUrl}/rest/v1/calendar`,\n      qs: {\n        'user_id': `eq.${userId}`,\n        'start_event': `lt.${endEvento}`,\n        'end_event': `gt.${startEvento}`,\n        'select': 'id,event_name,start_event,end_event'\n      },\n      headers: {\n        'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9',\n        'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9'\n      }\n    });\n\n    // Filtra: remove TODOS os eventos criados neste batch\n    const conflitos = (Array.isArray(resp) ? resp : [])\n      .filter(e => !idsCriados.includes(String(e.id)));\n\n    if (conflitos.length > 0) {\n      conflitosGerais.push({\n        evento_novo: nomeEvento,\n        conflita_com: conflitos.map(c => ({\n          nome: c.event_name,\n          inicio: c.start_event\n        }))\n      });\n    }\n  } catch (err) {\n    // Se falhar a consulta, segue sem bloquear\n  }\n}\n\nif (conflitosGerais.length === 0) {\n  return [{ json: { tem_conflito: false, mensagem_conflito: null } }];\n}\n\n// Monta UMA ÚNICA mensagem consolidada\nlet msg = '⚠️ Atenção! Alguns dos seus novos eventos coincidem com eventos já existentes:\\n\\n';\nfor (const c of conflitosGerais) {\n  const lista = c.conflita_com.map(x => `  - ${x.nome}`).join('\\n');\n  msg += `📌 \"${c.evento_novo}\" conflita com:\\n${lista}\\n\\n`;\n}\nmsg += 'Verifique sua agenda para evitar sobreposições.';\n\nreturn [{\n  json: {\n    tem_conflito: true,\n    quantidade_conflitos: conflitosGerais.length,\n    mensagem_conflito: msg,\n    conflitos_detalhes: conflitosGerais\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4432, 1472],
+      "id": "conflito-check-batch-001",
+      "name": "Verificar Conflitos (Batch)"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "conflito-if-batch",
+              "leftValue": "={{ $json.tem_conflito }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [4624, 1472],
+      "id": "conflito-if-batch-001",
+      "name": "Tem Conflito? (Batch)"
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "744582292082931",
+        "recipientPhoneNumber": "=+{{ $('premium').item.json.body.user_phone }}",
+        "textBody": "={{ $('Verificar Conflitos (Batch)').item.json.mensagem_conflito }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [4816, 1392],
+      "id": "aviso-conflito-batch-001",
+      "name": "Aviso Conflito (Batch)",
+      "webhookId": "f5115870-a475-4765-856e-b711b849aabd",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "j0RGyMFfqZfWpCBu",
+          "name": "WhatsApp account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "744582292082931",
+        "recipientPhoneNumber": "=+{{ $('premium').item.json.body.user_phone }}",
+        "textBody": "={{ $('Code in JavaScript').first().json.parsed_output.mensagem }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [5008, 1472],
+      "id": "0b36842f-f46f-43dc-a6b8-913150d8c368",
+      "name": "Send message2 - Confirmação Batch",
+      "webhookId": "f5115870-a475-4765-856e-b711b849aabd",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "j0RGyMFfqZfWpCBu",
+          "name": "WhatsApp account 2"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [4816, 1552],
+      "id": "no-conflito-batch-001",
+      "name": "Sem Conflito (Batch)"
+    }
+  ],
+  "connections": {
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "If7",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+
+    "If7": {
+      "main": [
+        [
+          {
+            "node": "lastGet3",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP - Create Calendar Tool1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+
+    "lastGet3": {
+      "main": [
+        [
+          {
+            "node": "If2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If2": {
+      "main": [
+        [
+          {
+            "node": "Redis2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Operation, do nothing4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redis2": {
+      "main": [
+        [
+          {
+            "node": "HTTP - Create Calendar Tool2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP - Create Calendar Tool2": {
+      "main": [
+        [
+          {
+            "node": "Verificar Conflitos (Único)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verificar Conflitos (Único)": {
+      "main": [
+        [
+          {
+            "node": "Tem Conflito? (Único)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tem Conflito? (Único)": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request - Template WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP Request - Template WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request - Template WhatsApp": {
+      "main": [
+        [
+          {
+            "node": "Aviso Conflito (Único)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+
+    "HTTP - Create Calendar Tool1": {
+      "main": [
+        [
+          {
+            "node": "Aggregate1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate1": {
+      "main": [
+        [
+          {
+            "node": "lastGet6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "lastGet6": {
+      "main": [
+        [
+          {
+            "node": "If6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If6": {
+      "main": [
+        [
+          {
+            "node": "Redis7",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Operation, do nothing7",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redis7": {
+      "main": [
+        [
+          {
+            "node": "Verificar Conflitos (Batch)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verificar Conflitos (Batch)": {
+      "main": [
+        [
+          {
+            "node": "Tem Conflito? (Batch)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tem Conflito? (Batch)": {
+      "main": [
+        [
+          {
+            "node": "Aviso Conflito (Batch)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Sem Conflito (Batch)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aviso Conflito (Batch)": {
+      "main": [
+        [
+          {
+            "node": "Send message2 - Confirmação Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sem Conflito (Batch)": {
+      "main": [
+        [
+          {
+            "node": "Send message2 - Confirmação Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "c4205d5b77ecfb7c5f0bc3b25969f10bab24d6fe34fb86cd8e32c8dc2fb80e01"
+  }
+}

@@ -1,0 +1,226 @@
+==============================================================================
+FIX - DETECÇÃO DE CONFLITO DE HORÁRIO (CONSOLIDADA)
+==============================================================================
+
+PROBLEMA:
+---------
+Quando o usuário cria múltiplos eventos de uma vez (ex: "Crie reunião às 14h,
+consulta às 14h e almoço às 14h"), o sistema antigo verificava conflitos
+DENTRO do webhook de criação de cada evento individual. Resultado:
+
+  Evento 1 → webhook → cria → sem conflito
+  Evento 2 → webhook → cria → AVISA conflito com evento 1 ⚠️
+  Evento 3 → webhook → cria → AVISA conflito com evento 1 e 2 ⚠️⚠️
+
+O usuário recebia múltiplas mensagens de aviso repetidas, uma para cada
+evento do batch. Impossível distinguir conflitos reais (com eventos
+pré-existentes) de conflitos entre os próprios eventos do batch.
+
+
+SOLUÇÃO:
+--------
+Mover a detecção de conflito para DEPOIS de todos os eventos serem criados,
+no workflow principal (caller), e remover a verificação de dentro do webhook.
+
+  Evento 1 → webhook → cria ✅
+  Evento 2 → webhook → cria ✅
+  Evento 3 → webhook → cria ✅
+  [Todos criados] → Verifica conflitos (exclui batch) → Avisa UMA VEZ ⚠️
+
+
+==============================================================================
+ARQUIVOS CRIADOS
+==============================================================================
+
+1. fix-conflito-horario-workflow.json
+   → Webhook Calendar-Creator ATUALIZADO (sem o node Get many rows1)
+
+2. fix-conflito-horario-nodes-principais.json
+   → Nodes do workflow principal com a detecção de conflito consolidada
+
+3. fix-conflito-horario-passo-a-passo.txt (este arquivo)
+
+
+==============================================================================
+PASSO A PASSO - IMPLEMENTAÇÃO
+==============================================================================
+
+
+----------------------------------------------
+PASSO 1: ALTERAR O WEBHOOK CALENDAR-CREATOR
+----------------------------------------------
+
+O que fazer: Remover o node "Get many rows1" do fluxo do webhook.
+
+ANTES (fluxo atual):
+  Webhook → Edit Fields → SET user_id → buscar_conexao → Edit Fields
+  → [Get many rows1] → If (tem token?) → criar evento
+
+DEPOIS (fluxo novo):
+  Webhook → Edit Fields → SET user_id → buscar_conexao → Edit Fields
+  → If (tem token?) → criar evento
+
+Como fazer:
+  a) Abra o workflow "Calendar-Creator" no n8n
+  b) Delete o node "Get many rows1"
+  c) Conecte a saída do "Edit Fields" direto no node "If"
+  d) Salve e ative
+
+IMPORTANTE: O node "sucesso_google" e "sucesso_padrao" agora retornam
+campos extras (evento_id_criado, start, end, summary). Atualize esses
+nodes conforme o JSON em fix-conflito-horario-workflow.json.
+
+
+----------------------------------------------
+PASSO 2: ATUALIZAR RESPOSTAS DO WEBHOOK
+----------------------------------------------
+
+Os nodes "sucesso_google" e "sucesso_padrao" precisam retornar o ID do
+evento criado no Supabase. Isso permite que o workflow principal saiba
+quais IDs excluir da verificação de conflito.
+
+No node "sucesso_google", adicione:
+  - evento_id_criado = {{ $('create_calendar_sup_google').item.json.id }}
+  - start = {{ $('SET user_id (debug)').item.json.start }}
+  - end = {{ $('SET user_id (debug)').item.json.end }}
+  - summary = {{ $('SET user_id (debug)').item.json.summary }}
+
+No node "sucesso_padrao", adicione:
+  - evento_id_criado = {{ $('create_calendar_sup_google1').item.json.id }}
+  - start = {{ $('SET user_id (debug)').item.json.start }}
+  - end = {{ $('SET user_id (debug)').item.json.end }}
+  - summary = {{ $('SET user_id (debug)').item.json.summary }}
+
+
+----------------------------------------------
+PASSO 3: ADICIONAR NODES NO WORKFLOW PRINCIPAL
+----------------------------------------------
+
+Importe o arquivo fix-conflito-horario-nodes-principais.json.
+Os nodes novos são:
+
+  A) PATH EVENTO ÚNICO (saída TRUE do If7):
+
+     Fluxo anterior:
+       Redis2 → HTTP Create Calendar Tool2 → HTTP Request (template WA)
+
+     Fluxo novo:
+       Redis2 → HTTP Create Calendar Tool2
+       → [NOVO] "Verificar Conflitos (Único)"
+       → [NOVO] "Tem Conflito? (Único)"
+         ├─ TRUE  → HTTP Request (template WA) → "Aviso Conflito (Único)"
+         └─ FALSE → HTTP Request (template WA)
+
+     O node "Verificar Conflitos (Único)" é um Code node que:
+       1. Pega o start/end do evento recém-criado
+       2. Consulta Supabase: eventos sobrepostos do mesmo user
+       3. Remove o próprio evento da lista (por ID)
+       4. Se sobrar algo → tem conflito real
+
+  B) PATH MÚLTIPLOS EVENTOS (saída FALSE do If7):
+
+     Fluxo anterior:
+       HTTP Create Calendar Tool1 → Aggregate → lastGet6 → If6
+       → Redis7 → Send message2
+
+     Fluxo novo:
+       HTTP Create Calendar Tool1 → Aggregate → lastGet6 → If6
+       → Redis7
+       → [NOVO] "Verificar Conflitos (Batch)"
+       → [NOVO] "Tem Conflito? (Batch)"
+         ├─ TRUE  → "Aviso Conflito (Batch)" → Send message2
+         └─ FALSE → "Sem Conflito (Batch)" → Send message2
+
+     O node "Verificar Conflitos (Batch)" é um Code node que:
+       1. Itera sobre TODOS os eventos do batch (toolArray)
+       2. Para cada um, consulta Supabase por sobreposições
+       3. Remove TODOS os IDs do batch da lista de conflitos
+       4. Monta UMA ÚNICA mensagem consolidada com todos os conflitos
+
+
+----------------------------------------------
+PASSO 4: CONFIGURAR CREDENCIAIS DO SUPABASE
+----------------------------------------------
+
+IMPORTANTE: Os Code nodes "Verificar Conflitos" fazem chamadas HTTP
+diretamente ao Supabase. Você precisa substituir os headers placeholder
+pelos seus tokens reais.
+
+Nos dois Code nodes, localize estas linhas:
+  headers: {
+    'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9',
+    'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9'
+  }
+
+Substitua por seu anon key real do Supabase (ou service_role key):
+  headers: {
+    'apikey': 'SUA_SUPABASE_ANON_KEY_AQUI',
+    'Authorization': 'Bearer SUA_SUPABASE_ANON_KEY_AQUI'
+  }
+
+ALTERNATIVA (melhor): Use o node Supabase nativo do n8n em vez do
+httpRequest dentro do Code. Nesse caso, separe a lógica:
+  1. Code node: prepara os parâmetros de query
+  2. Supabase node: executa a query
+  3. Code node: processa resultados e monta mensagem
+
+
+----------------------------------------------
+PASSO 5: TESTAR
+----------------------------------------------
+
+Teste 1 - Evento único SEM conflito:
+  → Crie "Reunião às 10h" quando não há nada às 10h
+  → Esperado: recebe template de confirmação, SEM aviso de conflito
+
+Teste 2 - Evento único COM conflito:
+  → Crie "Reunião às 10h" quando JÁ tem evento às 10h
+  → Esperado: recebe template + UMA mensagem de aviso
+
+Teste 3 - Múltiplos eventos SEM conflito:
+  → Crie "Reunião 10h, Almoço 12h, Consulta 15h"
+  → Esperado: eventos criados, SEM aviso (conflitos entre batch ignorados)
+
+Teste 4 - Múltiplos eventos COM conflito pré-existente:
+  → Já existe "Dentista às 15h"
+  → Crie "Reunião 10h, Almoço 12h, Consulta 15h"
+  → Esperado: UMA mensagem dizendo que "Consulta" conflita com "Dentista"
+
+Teste 5 - Múltiplos eventos no mesmo horário:
+  → Crie "Evento A às 14h, Evento B às 14h, Evento C às 14h"
+  → Esperado: eventos criados normalmente, SEM aviso
+    (são do mesmo batch, o usuário pediu explicitamente)
+
+
+==============================================================================
+NOTAS TÉCNICAS
+==============================================================================
+
+1. QUERY DE SOBREPOSIÇÃO:
+   A lógica de overlap é: start_event < END_novo AND end_event > START_novo
+   Isso captura qualquer evento que se sobreponha parcial ou totalmente.
+
+2. EXCLUSÃO DO BATCH:
+   Os IDs dos eventos criados no batch são coletados a partir do retorno
+   do webhook (campo evento_id_criado). Todos são excluídos da query de
+   conflito via filter: !idsCriados.includes(String(e.id))
+
+3. MENSAGEM CONSOLIDADA:
+   Em vez de N mensagens separadas, o sistema monta UMA mensagem como:
+
+   ⚠️ Atenção! Alguns dos seus novos eventos coincidem com eventos
+   já existentes:
+
+   📌 "Consulta" conflita com:
+     - Dentista
+
+   Verifique sua agenda para evitar sobreposições.
+
+4. DEBOUNCE PRESERVADO:
+   O mecanismo de debounce com Redis (firstGet/lastGet) continua
+   funcionando normalmente. A verificação de conflito acontece APÓS
+   o debounce confirmar que o batch terminou.
+
+5. WEBHOOK SEM SIDE EFFECTS:
+   O webhook agora é "puro" - apenas cria o evento e retorna o resultado.
+   Não envia mensagens de aviso nem faz verificações extras.

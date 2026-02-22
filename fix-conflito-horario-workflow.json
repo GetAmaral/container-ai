@@ -1,0 +1,697 @@
+{
+  "name": "Fix Conflito Horario - Detecção Consolidada",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "5e0f5e77-aea5-4784-8a85-58e8eaf49c30",
+        "authentication": "basicAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [-2000, 480],
+      "id": "c33ee392-7794-451d-a161-c9f667c92f87",
+      "name": "Webhook-Calendar-Creator",
+      "webhookId": "5e0f5e77-aea5-4784-8a85-58e8eaf49c30",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "fSx1ApZPcITxgUNE",
+          "name": "Avelum Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e376b126-38a6-4c43-a995-d9809b6c9f51",
+              "name": "summary",
+              "value": "={{ $json.body.nome_evento }}",
+              "type": "string"
+            },
+            {
+              "id": "a97d1bbf-697f-4ee6-b4cd-a4285ac0de83",
+              "name": "=description",
+              "value": "={{ $json.body.descricao_evento }}",
+              "type": "string"
+            },
+            {
+              "id": "89d70cec-46ff-4962-886e-b5f30607ab63",
+              "name": "start",
+              "value": "={{ $json.body.data_inicio_evento }}",
+              "type": "string"
+            },
+            {
+              "id": "8fd4c158-5b61-457f-9c55-1a526797705a",
+              "name": "end",
+              "value": "={{ $json.body.data_fim_evento }}",
+              "type": "string"
+            },
+            {
+              "id": "3722332e-f362-4936-add5-c70f5d550a7a",
+              "name": "user_id",
+              "value": "={{ $json.body.id_user }}",
+              "type": "string"
+            },
+            {
+              "id": "batch01-novo",
+              "name": "batch_id",
+              "value": "={{ $json.body.batch_id || '' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-1792, 480],
+      "id": "37f1b9f5-9fa0-463e-a489-cd3bee46d6d6",
+      "name": "Edit Fields15"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [-1568, 480],
+      "name": "SET user_id (debug)",
+      "id": "41b75f83-5823-4386-ac16-75614d794481"
+    },
+    {
+      "parameters": {
+        "url": "https://ldbdtakddxznfridsarn.supabase.co/rest/v1/google_calendar_connections",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "user_id",
+              "value": "={{ 'eq.' + String($json.user_id ?? '').trim() }}"
+            },
+            {
+              "name": "is_connected",
+              "value": "is.true"
+            },
+            {
+              "name": "select",
+              "value": "encrypted_refresh_token,updated_at"
+            },
+            {
+              "name": "order",
+              "value": "updated_at.desc"
+            },
+            {
+              "name": "limit",
+              "value": "1"
+            }
+          ]
+        },
+        "options": {
+          "response": {}
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-1376, 480],
+      "name": "buscar_conexao_user",
+      "id": "808c59c6-e06b-4efc-95a1-f5e29e0d2c14",
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "W82InVZDq0AfqJsg",
+          "name": "Supabase SR"
+        },
+        "supabaseApi": {
+          "id": "kQkN5PrZm2GihQfS",
+          "name": "Total Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "e76a40c3-c6f0-4763-a905-42d58fdcb083",
+              "leftValue": "={{ $('buscar_conexao_user').item.json.encrypted_refresh_token }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [240, 464],
+      "id": "8b792bf0-0d2a-4c85-a69d-eb863f749f51",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "5c5fa976-8772-4c37-af4f-cd4bb6db990f",
+              "name": "encrypted_refresh_token",
+              "value": "={{ $('buscar_conexao_user').item.json.encrypted_refresh_token }}",
+              "type": "string"
+            },
+            {
+              "id": "847041d0-1205-4fe7-89a9-106a295cfe2a",
+              "name": "updated_at",
+              "value": "={{ $('buscar_conexao_user').item.json.updated_at }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [464, 464],
+      "id": "f3311dd6-bcf8-4ee3-ac5e-1a3a3fc421ae",
+      "name": "token"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://ldbdtakddxznfridsarn.supabase.co/rest/v1/rpc/decrypt_token_json",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({ encrypted_token: $json.encrypted_refresh_token, key_text: 'google_calendar_secret_key_2024' }) }}",
+        "options": {
+          "response": {}
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [624, 464],
+      "name": "descriptografar_token_prod",
+      "id": "a1ce9955-17f5-4f29-a77e-39f21b1df591",
+      "credentials": {
+        "supabaseApi": {
+          "id": "kQkN5PrZm2GihQfS",
+          "name": "Total Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://oauth2.googleapis.com/token",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "grant_type",
+              "value": "refresh_token"
+            },
+            {
+              "name": "refresh_token",
+              "value": "={{ $('descriptografar_token_prod').first().json.token }}"
+            },
+            {
+              "name": "client_id",
+              "value": "351327701355-u3sbvfhhfo20pk46v0avi2u8vootm9j8.apps.googleusercontent.com"
+            }
+          ]
+        },
+        "options": {
+          "response": {},
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "name": "refresh_access",
+      "id": "b6d22557-3542-4dbf-a8f2-6063a27c184e",
+      "position": [848, 464],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "roVHHFNbtOH1noLQ",
+          "name": "Basic Auth Google"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + ( $('refresh_access').first().json.access_token || (Array.isArray($('refresh_access').first().json) && $('refresh_access').first().json[0] ? $('refresh_access').first().json[0].access_token : '') ) }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ( () => { \n  const src = ($('SET user_id (debug)').first()?.json) ?? $json ?? {};\n  const rawSummary     = (src.summary ?? src.nome_evento);\n  const rawDescription = (src.description ?? src.descricao_evento ?? '');\n  const rawStart       = (src.start ?? src.data_inicio_evento);\n  const rawEnd         = (src.end   ?? src.data_fim_evento);\n  const userId         = (src.user_id ?? src.id_user ?? '');\n\n  const pad2 = (n) => String(n).padStart(2,'0');\n  const addDays = (yyyyMMdd, n=1) => {\n    const [y,m,d] = yyyyMMdd.split('-').map(Number);\n    const dt = new Date(Date.UTC(y, m-1, d));\n    dt.setUTCDate(dt.getUTCDate() + n);\n    return `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth()+1)}-${pad2(dt.getUTCDate())}`;\n  };\n\n  const toRFC3339 = (v) => {\n    if (!v) return null;\n    const s = String(v).trim();\n\n    if (/^\\\\d{4}-\\\\d{2}-\\\\d{2}$/.test(s)) return { allDay: true, date: s };\n\n    let out = s;\n\n    if (/^\\\\d{4}-\\\\d{2}-\\\\d{2} \\\\d{2}:\\\\d{2}(:\\\\d{2})?([\\\\-+]\\\\d{2}(:?\\\\d{2})?)?$/.test(out)) {\n      out = out.replace(' ', 'T');\n    }\n\n    if (/^\\\\d{4}-\\\\d{2}-\\\\d{2}T\\\\d{2}:\\\\d{2}$/.test(out)) out += ':00';\n\n    out = out.replace(/([+\\\\-]\\\\d{2})(?!:?[\\\\d]{2})$/, '$1:00');\n\n    if (!/([+\\\\-]\\\\d{2}:\\\\d{2}|Z)$/.test(out)) out += '-03:00';\n\n    if (!/^\\\\d{4}-\\\\d{2}-\\\\d{2}T\\\\d{2}:\\\\d{2}:\\\\d{2}(?:[+\\\\-]\\\\d{2}:\\\\d{2}|Z)$/.test(out)) return null;\n\n    return { allDay: false, dateTime: out };\n  };\n\n  const sStart = toRFC3339(rawStart);\n  const sEnd   = toRFC3339(rawEnd);\n\n  const base = {\n    summary: (rawSummary && String(rawSummary).trim()) || '(sem título)',\n    description: String(rawDescription ?? ''),\n    colorId: '10',\n    extendedProperties: { private: { supabase_user_id: String(userId ?? '') } }\n  };\n\n  if (sStart?.allDay && sEnd?.allDay) {\n    const startDate = sStart.date;\n    const endDate   = (sEnd.date && sEnd.date !== startDate) ? sEnd.date : addDays(startDate, 1);\n    return {\n      ...base,\n      start: { date: startDate, timeZone: 'America/Sao_Paulo' },\n      end:   { date: endDate,   timeZone: 'America/Sao_Paulo' }\n    };\n  }\n\n  if (!sStart || !sEnd || sStart.allDay || sEnd.allDay) {\n    throw new Error('Start/End inválidos.');\n  }\n\n  return {\n    ...base,\n    start: { dateTime: sStart.dateTime, timeZone: 'America/Sao_Paulo' },\n    end:   { dateTime: sEnd.dateTime,   timeZone: 'America/Sao_Paulo' }\n  };\n})() }}",
+        "options": {}
+      },
+      "id": "97eb335e-56ad-4d5a-a3aa-c5629720db96",
+      "name": "criar_evento_google1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1024, 480]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "name": "limpar_tokens_e_reduzir_saida",
+      "id": "2634a46c-ee7d-48b3-bd39-341d35834770",
+      "position": [1280, 464]
+    },
+    {
+      "parameters": {
+        "tableId": "calendar",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "event_name",
+              "fieldValue": "={{ $json.summary }}"
+            },
+            {
+              "fieldId": "desc_event",
+              "fieldValue": "={{ $json.description }}"
+            },
+            {
+              "fieldId": "start_event",
+              "fieldValue": "={{ $json.start.dateTime }}"
+            },
+            {
+              "fieldId": "end_event",
+              "fieldValue": "={{ $json.end.dateTime }}"
+            },
+            {
+              "fieldId": "connect_google",
+              "fieldValue": "=TRUE"
+            },
+            {
+              "fieldId": "calendar_email_created",
+              "fieldValue": "={{ $json.organizer.email }}"
+            },
+            {
+              "fieldId": "user_id",
+              "fieldValue": "={{ $('SET user_id (debug)').item.json.user_id }}"
+            },
+            {
+              "fieldId": "session_event_id_google",
+              "fieldValue": "={{ $json.id }}"
+            },
+            {
+              "fieldId": "reminder",
+              "fieldValue": "FALSE"
+            },
+            {
+              "fieldId": "remembered",
+              "fieldValue": "FALSE"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1488, 464],
+      "id": "615a4105-ebdc-4e63-acb0-97ce00eac88f",
+      "name": "create_calendar_sup_google",
+      "credentials": {
+        "supabaseApi": {
+          "id": "kQkN5PrZm2GihQfS",
+          "name": "Total Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e01d463b-8b86-4439-a417-060f30a14f81",
+              "name": "sucesso",
+              "value": "criação do evento na agenda google e padrão feito com sucesso.",
+              "type": "string"
+            },
+            {
+              "id": "retorno-id-google",
+              "name": "evento_id_criado",
+              "value": "={{ $('create_calendar_sup_google').item.json.id }}",
+              "type": "string"
+            },
+            {
+              "id": "retorno-start",
+              "name": "start",
+              "value": "={{ $('SET user_id (debug)').item.json.start }}",
+              "type": "string"
+            },
+            {
+              "id": "retorno-end",
+              "name": "end",
+              "value": "={{ $('SET user_id (debug)').item.json.end }}",
+              "type": "string"
+            },
+            {
+              "id": "retorno-summary",
+              "name": "summary",
+              "value": "={{ $('SET user_id (debug)').item.json.summary }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1696, 464],
+      "id": "67346a85-8d3d-4eb6-a296-90a38f239ad0",
+      "name": "sucesso_google"
+    },
+    {
+      "parameters": {
+        "tableId": "calendar",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "event_name",
+              "fieldValue": "={{ $json.summary }}"
+            },
+            {
+              "fieldId": "desc_event",
+              "fieldValue": "={{ $json.description }}"
+            },
+            {
+              "fieldId": "start_event",
+              "fieldValue": "={{ $json.start }}"
+            },
+            {
+              "fieldId": "end_event",
+              "fieldValue": "={{ $json.end }}"
+            },
+            {
+              "fieldId": "connect_google",
+              "fieldValue": "FALSE"
+            },
+            {
+              "fieldId": "user_id",
+              "fieldValue": "={{ $('SET user_id (debug)').item.json.user_id }}"
+            },
+            {
+              "fieldId": "reminder",
+              "fieldValue": "FALSE"
+            },
+            {
+              "fieldId": "remembered",
+              "fieldValue": "FALSE"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [448, 608],
+      "id": "2bf6b601-cd05-4210-8c40-fc9976cf3d2a",
+      "name": "create_calendar_sup_google1",
+      "credentials": {
+        "supabaseApi": {
+          "id": "kQkN5PrZm2GihQfS",
+          "name": "Total Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "951ad5af-00e8-4c5b-a596-faa7feb9f177",
+              "name": "sucesso_padrao",
+              "value": "evento criado na agenda padrão com sucesso, usuário não possui conexão com google agenda.",
+              "type": "string"
+            },
+            {
+              "id": "retorno-id-padrao",
+              "name": "evento_id_criado",
+              "value": "={{ $('create_calendar_sup_google1').item.json.id }}",
+              "type": "string"
+            },
+            {
+              "id": "retorno-start-padrao",
+              "name": "start",
+              "value": "={{ $('SET user_id (debug)').item.json.start }}",
+              "type": "string"
+            },
+            {
+              "id": "retorno-end-padrao",
+              "name": "end",
+              "value": "={{ $('SET user_id (debug)').item.json.end }}",
+              "type": "string"
+            },
+            {
+              "id": "retorno-summary-padrao",
+              "name": "summary",
+              "value": "={{ $('SET user_id (debug)').item.json.summary }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [624, 736],
+      "id": "8b107810-d984-419e-93f8-ea0fe2f55dd3",
+      "name": "sucesso_padrao"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "edit-fields-summary",
+              "name": "summary",
+              "value": "={{ $('SET user_id (debug)').item.json.summary }}",
+              "type": "string"
+            },
+            {
+              "id": "edit-fields-description",
+              "name": "description",
+              "value": "={{ $('SET user_id (debug)').item.json.description }}",
+              "type": "string"
+            },
+            {
+              "id": "edit-fields-start",
+              "name": "start",
+              "value": "={{ $('SET user_id (debug)').item.json.start }}",
+              "type": "string"
+            },
+            {
+              "id": "edit-fields-end",
+              "name": "end",
+              "value": "={{ $('SET user_id (debug)').item.json.end }}",
+              "type": "string"
+            },
+            {
+              "id": "edit-fields-user-id",
+              "name": "user_id",
+              "value": "={{ $('SET user_id (debug)').item.json.user_id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-1168, 480],
+      "id": "60ef508c-9295-4725-b1a1-3b824fa1b71c",
+      "name": "Edit Fields"
+    }
+  ],
+  "connections": {
+    "Webhook-Calendar-Creator": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields15",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields15": {
+      "main": [
+        [
+          {
+            "node": "SET user_id (debug)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SET user_id (debug)": {
+      "main": [
+        [
+          {
+            "node": "buscar_conexao_user",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "buscar_conexao_user": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "token",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "create_calendar_sup_google1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "token": {
+      "main": [
+        [
+          {
+            "node": "descriptografar_token_prod",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "descriptografar_token_prod": {
+      "main": [
+        [
+          {
+            "node": "refresh_access",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "refresh_access": {
+      "main": [
+        [
+          {
+            "node": "criar_evento_google1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "criar_evento_google1": {
+      "main": [
+        [
+          {
+            "node": "limpar_tokens_e_reduzir_saida",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "limpar_tokens_e_reduzir_saida": {
+      "main": [
+        [
+          {
+            "node": "create_calendar_sup_google",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "create_calendar_sup_google": {
+      "main": [
+        [
+          {
+            "node": "sucesso_google",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "create_calendar_sup_google1": {
+      "main": [
+        [
+          {
+            "node": "sucesso_padrao",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "c4205d5b77ecfb7c5f0bc3b25969f10bab24d6fe34fb86cd8e32c8dc2fb80e01"
+  }
+}
