@@ -1,0 +1,981 @@
+================================================================================
+  TOTAL ASSISTENTE - GUIA COMPLETO DE ATUALIZACAO VISUAL E OTIMIZACAO
+  Projeto: /home/AIOS-Total/novo-site-testing/
+  Data: 2026-02-23
+  Gerado por: Design Chief + AIOS Core
+================================================================================
+
+INDICE
+------
+  FASE 1 - LIMPEZA DE BUNDLE (Performance imediata)
+  FASE 2 - OTIMIZACAO DO BUILD (Vite + Code Splitting)
+  FASE 3 - CORRECAO DE CORES HARDCODED (Consistencia visual)
+  FASE 4 - ACESSIBILIDADE (ARIA + Semantica)
+  FASE 5 - COMPONENTES VISUAIS (Glass, Spinner, Animacoes)
+  FASE 6 - SEO E META TAGS (index.html)
+  FASE 7 - REMOCAO DE CODIGO MORTO (Limpeza final)
+  FASE 8 - VALIDACAO E TESTES
+
+================================================================================
+FASE 1 - LIMPEZA DE BUNDLE (Performance imediata)
+Impacto estimado: -2.5MB no bundle final
+================================================================================
+
+PASSO 1.1 - Remover chart.js e react-chartjs-2 (nao utilizados)
+------------------------------------------------------------------------
+Motivo: Estao no package.json mas NENHUM componente importa essas libs.
+Todos os graficos usam Recharts.
+
+Comando:
+  cd /home/AIOS-Total/novo-site-testing
+  npm uninstall chart.js react-chartjs-2
+
+Validacao: Buscar no codigo para confirmar que nao ha imports:
+  grep -r "chart.js" src/
+  grep -r "react-chartjs-2" src/
+  (deve retornar vazio)
+
+------------------------------------------------------------------------
+
+PASSO 1.2 - Unificar sistema de Toast (manter Sonner, remover Radix Toast)
+------------------------------------------------------------------------
+Motivo: O site carrega DOIS sistemas de toast simultaneamente:
+  - Radix UI Toast (src/components/ui/toast.tsx + toaster.tsx + use-toast.ts)
+  - Sonner (src/components/ui/sonner.tsx)
+
+1.2a) Primeiro, identificar todos os arquivos que usam o toast antigo:
+  grep -r "use-toast" src/ --include="*.tsx" --include="*.ts"
+  grep -r "from.*toaster" src/ --include="*.tsx" --include="*.ts"
+
+1.2b) Em cada arquivo encontrado, substituir:
+  ANTES:
+    import { useToast } from "@/hooks/use-toast";
+    import { toast } from "@/hooks/use-toast";
+  DEPOIS:
+    import { toast } from "sonner";
+
+  E ajustar as chamadas:
+  ANTES:
+    const { toast } = useToast();
+    toast({ title: "Sucesso", description: "Mensagem" });
+  DEPOIS:
+    toast.success("Mensagem");
+    // ou toast.error("Erro"), toast.info("Info"), toast("Mensagem")
+
+1.2c) Remover o Toaster do Radix em src/App.tsx:
+  ANTES (linhas ~2-3 e ~45-46):
+    import { Toaster } from "@/components/ui/toaster";
+    import { Toaster as Sonner } from "@/components/ui/sonner";
+    ...
+    <Toaster />
+    <Sonner />
+  DEPOIS:
+    import { Toaster } from "@/components/ui/sonner";
+    ...
+    <Toaster />
+
+1.2d) Deletar arquivos do Radix Toast:
+  rm src/components/ui/toast.tsx
+  rm src/components/ui/toaster.tsx
+  rm src/hooks/use-toast.ts
+
+1.2e) Remover dependencia (se nao usada por outros Radix):
+  npm uninstall @radix-ui/react-toast
+  (CUIDADO: verificar antes se outros componentes Radix nao dependem)
+
+------------------------------------------------------------------------
+
+PASSO 1.3 - Migrar Bootstrap Icons para Lucide React
+------------------------------------------------------------------------
+Motivo: bootstrap-icons pesa ~2MB e so e usado via wrapper BIcon.tsx.
+69 arquivos ja usam lucide-react diretamente.
+
+1.3a) Localizar todos os usos de BIcon:
+  grep -rn "BIcon" src/ --include="*.tsx"
+
+1.3b) Para cada uso encontrado, substituir pelo equivalente Lucide:
+
+  Mapeamento dos icones mais comuns usados no projeto:
+
+  BIcon                          Lucide React
+  ----------------------------------------
+  bi-chevron-right            -> ChevronRight
+  bi-chevron-left             -> ChevronLeft
+  bi-chevron-down             -> ChevronDown
+  bi-shield-check             -> ShieldCheck
+  bi-lock                     -> Lock
+  bi-credit-card              -> CreditCard
+  bi-wallet2                  -> Wallet
+  bi-piggy-bank               -> PiggyBank
+  bi-calendar3                -> Calendar
+  bi-graph-up                 -> TrendingUp
+  bi-graph-down               -> TrendingDown
+  bi-plus                     -> Plus
+  bi-trash                    -> Trash2
+  bi-pencil                   -> Pencil
+  bi-eye                      -> Eye
+  bi-eye-slash                -> EyeOff
+  bi-search                   -> Search
+  bi-x                        -> X
+  bi-check                    -> Check
+  bi-bell                     -> Bell
+  bi-gear                     -> Settings
+  bi-person                   -> User
+  bi-house                    -> Home
+  bi-envelope                 -> Mail
+  bi-telephone                -> Phone
+  bi-whatsapp                 -> MessageCircle (ou usar icone SVG custom)
+  bi-star                     -> Star
+  bi-star-fill                -> Star (com fill)
+  bi-arrow-right              -> ArrowRight
+  bi-arrow-left               -> ArrowLeft
+  bi-download                 -> Download
+  bi-upload                   -> Upload
+  bi-filter                   -> Filter
+  bi-sort-down                -> ArrowDownAZ
+  bi-cash                     -> DollarSign
+  bi-bar-chart                -> BarChart3
+  bi-pie-chart                -> PieChart
+
+  Exemplo de migracao:
+  ANTES:
+    import { BIcon } from "@/components/ui/BIcon";
+    <BIcon name="shield-check" className="w-4 h-4 text-muted-foreground" />
+  DEPOIS:
+    import { ShieldCheck } from "lucide-react";
+    <ShieldCheck className="w-4 h-4 text-muted-foreground" />
+
+1.3c) Apos migrar TODOS os usos, deletar:
+  rm src/components/ui/BIcon.tsx
+
+1.3d) Remover a dependencia:
+  npm uninstall bootstrap-icons
+
+1.3e) Remover imports de CSS do bootstrap-icons (se houver):
+  grep -r "bootstrap-icons" src/
+  grep -r "bootstrap-icons" index.html
+  (remover qualquer <link> ou import encontrado)
+
+------------------------------------------------------------------------
+
+PASSO 1.4 - Lazy load de libs de exportacao (jspdf + xlsx)
+------------------------------------------------------------------------
+Motivo: jspdf (~300KB) e xlsx (~500KB) so sao usados quando o usuario
+clica em "Exportar". Nao precisam estar no bundle inicial.
+
+1.4a) Em src/components/ReportsGenerator.tsx, substituir imports estaticos:
+
+  ANTES:
+    import jsPDF from 'jspdf';
+    import 'jspdf-autotable';
+    import * as XLSX from 'xlsx';
+
+  DEPOIS:
+    // Lazy imports - carregados apenas quando necessario
+    const loadJsPDF = () => import('jspdf').then(m => m.default);
+    const loadXLSX = () => import('xlsx');
+
+  E nos metodos de exportacao:
+  ANTES:
+    const doc = new jsPDF();
+  DEPOIS:
+    const jsPDF = await loadJsPDF();
+    const doc = new jsPDF();
+
+  ANTES:
+    const wb = XLSX.utils.book_new();
+  DEPOIS:
+    const XLSX = await loadXLSX();
+    const wb = XLSX.utils.book_new();
+
+1.4b) Fazer o mesmo em src/utils/exportUtils.ts:
+  Mesma logica de dynamic import.
+
+
+================================================================================
+FASE 2 - OTIMIZACAO DO BUILD (Vite + Code Splitting)
+Impacto: Carregamento inicial 40-60% mais rapido
+================================================================================
+
+PASSO 2.1 - Melhorar manual chunks no vite.config.ts
+------------------------------------------------------------------------
+Arquivo: /home/AIOS-Total/novo-site-testing/vite.config.ts
+
+ANTES (linhas 12-19):
+  build: {
+    outDir: 'dist',
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor-charts': ['recharts'],
+          'vendor-supabase': ['@supabase/supabase-js'],
+          'vendor-lucide': ['lucide-react'],
+        }
+      }
+    },
+    chunkSizeWarningLimit: 1000,
+  },
+
+DEPOIS:
+  build: {
+    outDir: 'dist',
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+          'vendor-charts': ['recharts'],
+          'vendor-supabase': ['@supabase/supabase-js'],
+          'vendor-lucide': ['lucide-react'],
+          'vendor-calendar': [
+            '@fullcalendar/core',
+            '@fullcalendar/daygrid',
+            '@fullcalendar/timegrid',
+            '@fullcalendar/interaction',
+            '@fullcalendar/react',
+            '@fullcalendar/rrule',
+          ],
+          'vendor-radix': [
+            '@radix-ui/react-dialog',
+            '@radix-ui/react-popover',
+            '@radix-ui/react-select',
+            '@radix-ui/react-dropdown-menu',
+            '@radix-ui/react-tabs',
+            '@radix-ui/react-accordion',
+            '@radix-ui/react-tooltip',
+          ],
+          'vendor-forms': [
+            'react-hook-form',
+            '@hookform/resolvers',
+            'zod',
+          ],
+          'vendor-table': [
+            '@tanstack/react-query',
+            '@tanstack/react-table',
+          ],
+          'vendor-dates': ['date-fns'],
+        }
+      }
+    },
+    chunkSizeWarningLimit: 500,
+  },
+
+------------------------------------------------------------------------
+
+PASSO 2.2 - Adicionar compressao gzip/brotli
+------------------------------------------------------------------------
+Instalar plugin:
+  npm install -D vite-plugin-compression
+
+Em vite.config.ts, adicionar:
+  import compression from 'vite-plugin-compression';
+
+  plugins: [
+    react(),
+    compression({
+      algorithm: 'gzip',
+      ext: '.gz',
+    }),
+    compression({
+      algorithm: 'brotliCompress',
+      ext: '.br',
+    }),
+  ],
+
+------------------------------------------------------------------------
+
+PASSO 2.3 - Prefetch de rotas criticas
+------------------------------------------------------------------------
+Em src/App.tsx, adicionar prefetch para rotas mais acessadas:
+
+  // Prefetch dashboard quando usuario esta logado
+  const prefetchDashboard = () => {
+    import("./components/dashboard/NewDashboard");
+  };
+
+  // No componente Account, apos login bem-sucedido:
+  useEffect(() => {
+    if (isAuthenticated) {
+      prefetchDashboard();
+    }
+  }, [isAuthenticated]);
+
+
+================================================================================
+FASE 3 - CORRECAO DE CORES HARDCODED (Consistencia visual)
+Impacto: Tema dark/light funciona 100%, manutencao facilitada
+================================================================================
+
+PASSO 3.1 - Criar tokens de cor adicionais no Tailwind
+------------------------------------------------------------------------
+Arquivo: /home/AIOS-Total/novo-site-testing/tailwind.config.ts
+
+Adicionar na secao colors do theme.extend:
+
+  'brand-dark': 'hsl(var(--brand-dark))',
+  'brand-green': 'hsl(var(--brand-green))',
+  'brand-muted': 'hsl(var(--brand-muted))',
+  'whatsapp': {
+    DEFAULT: 'hsl(var(--whatsapp))',
+    dark: 'hsl(var(--whatsapp-dark))',
+    bubble: 'hsl(var(--whatsapp-bubble))',
+    header: 'hsl(var(--whatsapp-header))',
+  },
+
+Arquivo: /home/AIOS-Total/novo-site-testing/src/index.css
+
+Adicionar nas variaveis :root (light mode):
+  --brand-dark: 216 56% 9%;        /* #0B1220 */
+  --brand-green: 151 100% 45%;     /* #00E676 */
+  --brand-muted: 215 16% 47%;      /* #64748B */
+  --whatsapp: 151 100% 33%;        /* #00a884 */
+  --whatsapp-dark: 200 29% 8%;     /* #0b141a */
+  --whatsapp-bubble: 165 100% 18%; /* #005c4b */
+  --whatsapp-header: 207 23% 16%;  /* #1f2c33 */
+
+Adicionar nas variaveis .dark (dark mode):
+  --brand-dark: 216 56% 95%;       /* Inverte para light no dark mode */
+  --brand-green: 151 100% 45%;     /* Mantem */
+  --brand-muted: 215 16% 65%;      /* Mais claro no dark */
+  --whatsapp: 151 100% 33%;
+  --whatsapp-dark: 200 29% 8%;
+  --whatsapp-bubble: 165 100% 18%;
+  --whatsapp-header: 207 23% 16%;
+
+------------------------------------------------------------------------
+
+PASSO 3.2 - Corrigir HeroSection.tsx
+------------------------------------------------------------------------
+Arquivo: /home/AIOS-Total/novo-site-testing/src/components/HeroSection.tsx
+
+Substituicoes necessarias (todas as ocorrencias):
+
+  ANTES                              DEPOIS
+  -------------------------------------------------------
+  text-[#0B1220]                  -> text-brand-dark
+  text-[#64748B]                  -> text-brand-muted
+  bg-[#00E676]                    -> bg-brand-green
+  hover:bg-[#00C853]              -> hover:bg-brand-green/90
+  bg-[#F8F9FA]                    -> bg-muted/30
+  bg-[#0B1220]                    -> bg-brand-dark
+  bg-[#0c0c0c]                    -> bg-whatsapp-dark
+  bg-[#0b141a]                    -> bg-whatsapp-dark
+  bg-[#1f2c33]                    -> bg-whatsapp-header
+  bg-[#005c4b]                    -> bg-whatsapp-bubble
+  bg-[#00a884]                    -> bg-whatsapp
+  border-black/[0.04]             -> border-foreground/[0.04]
+  bg-black/[0.03]                 -> bg-foreground/[0.03]
+  rgba(0,230,118,0.4)             -> usar shadow-[0_0_8px_hsl(var(--brand-green)/0.4)]
+
+  NOTA: O mockup do WhatsApp (linhas 76-180) usa cores especificas
+  do WhatsApp que NAO devem mudar com o tema. Essas podem manter
+  as cores fixas ou usar os tokens --whatsapp-*.
+
+------------------------------------------------------------------------
+
+PASSO 3.3 - Corrigir Footer.tsx
+------------------------------------------------------------------------
+Arquivo: /home/AIOS-Total/novo-site-testing/src/components/Footer.tsx
+
+  ANTES                              DEPOIS
+  -------------------------------------------------------
+  bg-[#0B1220]                    -> bg-brand-dark
+  text-[#00E676]                  -> text-primary
+  hover:text-[#00E676]            -> hover:text-primary
+  text-white                      -> text-primary-foreground (ou text-white se footer sempre escuro)
+  text-white/40                   -> text-primary-foreground/40
+  text-white/50                   -> text-primary-foreground/50
+  bg-white/5                      -> bg-primary-foreground/5
+
+  NOTA: Se o Footer for SEMPRE dark (independente do tema),
+  pode manter cores fixas. Mas usar tokens e melhor para futuro.
+
+------------------------------------------------------------------------
+
+PASSO 3.4 - Corrigir PricingSection.tsx
+------------------------------------------------------------------------
+Arquivo: /home/AIOS-Total/novo-site-testing/src/components/PricingSection.tsx
+
+  ANTES                              DEPOIS
+  -------------------------------------------------------
+  text-[#0B1220]                  -> text-brand-dark
+  text-[#64748B]                  -> text-brand-muted
+  text-[#94A3B8]                  -> text-muted-foreground
+  bg-[#00E676]                    -> bg-primary
+  border-black/[0.03]             -> border-foreground/[0.03]
+
+------------------------------------------------------------------------
+
+PASSO 3.5 - Corrigir CustomBarChart.tsx
+------------------------------------------------------------------------
+Arquivo: /home/AIOS-Total/novo-site-testing/src/components/dashboard/CustomBarChart.tsx
+
+  ANTES (inline styles):
+    style={{ background: '#00E676' }}   -> style={{ background: 'hsl(var(--primary))' }}
+    style={{ background: '#0B1220' }}   -> style={{ background: 'hsl(var(--brand-dark))' }}
+
+  Ou melhor, usar classes Tailwind:
+    style={{ background: '#00E676' }}   -> className="... bg-primary"  (remover style)
+    style={{ background: '#0B1220' }}   -> className="... bg-brand-dark" (remover style)
+
+------------------------------------------------------------------------
+
+PASSO 3.6 - Revisar todos os arquivos restantes
+------------------------------------------------------------------------
+Buscar por cores hardcoded em TODO o projeto:
+
+  grep -rn "#0B1220\|#00E676\|#64748B\|#94A3B8\|#00C853\|#0c0c0c\|#0b141a\|#1f2c33\|#005c4b\|#00a884" src/ --include="*.tsx" --include="*.ts"
+
+Para cada ocorrencia, substituir pelo token CSS correspondente.
+
+EXCECOES (nao substituir):
+  - Cores dentro de dados de graficos (arrays de cores para Recharts)
+  - SVGs inline que precisam de cores fixas
+  - Icones de terceiros
+
+
+================================================================================
+FASE 4 - ACESSIBILIDADE (ARIA + Semantica)
+Impacto: Compliance WCAG 2.1, melhor SEO, screen reader support
+================================================================================
+
+PASSO 4.1 - PricingSection.tsx - Adicionar ARIA
+------------------------------------------------------------------------
+Arquivo: /home/AIOS-Total/novo-site-testing/src/components/PricingSection.tsx
+
+4.1a) Na tag <section> (linha ~37):
+  ANTES:
+    <section id="pricing" className="...">
+  DEPOIS:
+    <section id="pricing" aria-labelledby="pricing-title" className="...">
+
+4.1b) No <h2> (linha ~43):
+  ANTES:
+    <h2 className="...">
+  DEPOIS:
+    <h2 id="pricing-title" className="...">
+
+4.1c) Na lista de features (linhas ~86-93):
+  Trocar <div> por <ul> e <li>:
+  ANTES:
+    <div className="space-y-5 ...">
+      {features.map((feature, i) => (
+        <div key={i} className="flex items-center gap-4 ...">
+  DEPOIS:
+    <ul className="space-y-5 ..." role="list" aria-label="Recursos inclusos no plano">
+      {features.map((feature, i) => (
+        <li key={i} className="flex items-center gap-4 ...">
+
+4.1d) Nos trust badges (linhas ~124-136):
+  ANTES:
+    <div className="flex items-center gap-1">
+      <BIcon name="shield-check" className="..." />
+      <span>Seguro</span>
+    </div>
+  DEPOIS:
+    <div className="flex items-center gap-1" role="img" aria-label="Seguro">
+      <ShieldCheck className="..." aria-hidden="true" />
+      <span>Seguro</span>
+    </div>
+
+------------------------------------------------------------------------
+
+PASSO 4.2 - CustomDonutChart.tsx - Adicionar ARIA
+------------------------------------------------------------------------
+Arquivo: /home/AIOS-Total/novo-site-testing/src/components/dashboard/CustomDonutChart.tsx
+
+4.2a) No container do grafico (linha ~55):
+  ANTES:
+    <div className="relative w-52 h-52 ...">
+  DEPOIS:
+    <div
+      className="relative w-52 h-52 ..."
+      role="img"
+      aria-label="Grafico de despesas por categoria"
+    >
+
+4.2b) No SVG (linha ~56):
+  ANTES:
+    <svg viewBox="0 0 100 100" className="...">
+  DEPOIS:
+    <svg viewBox="0 0 100 100" className="..." aria-hidden="true">
+
+4.2c) Adicionar uma descricao invisivel para screen readers, ANTES do SVG:
+    <span className="sr-only">
+      Distribuicao de despesas: {segments.map(s =>
+        `${s.category}: R$ ${s.value.toLocaleString('pt-BR')}`
+      ).join(', ')}
+    </span>
+
+------------------------------------------------------------------------
+
+PASSO 4.3 - CustomBarChart.tsx - Adicionar ARIA
+------------------------------------------------------------------------
+Arquivo: /home/AIOS-Total/novo-site-testing/src/components/dashboard/CustomBarChart.tsx
+
+4.3a) No container principal (linha ~27):
+  ANTES:
+    <div className="relative h-64 w-full ...">
+  DEPOIS:
+    <div
+      className="relative h-64 w-full ..."
+      role="img"
+      aria-label="Grafico de barras - Receitas e despesas por mes"
+    >
+
+4.3b) Nas barras de receita (linhas ~44-56):
+  Adicionar:
+    aria-label={`Entrada ${item.month}: R$ ${item.income.toLocaleString('pt-BR')}`}
+
+4.3c) Nas barras de despesa (linhas ~59-71):
+  Adicionar:
+    aria-label={`Saida ${item.month}: R$ ${item.expense.toLocaleString('pt-BR')}`}
+
+------------------------------------------------------------------------
+
+PASSO 4.4 - LoadingSpinner.tsx - Adicionar role e aria
+------------------------------------------------------------------------
+Arquivo: /home/AIOS-Total/novo-site-testing/src/components/LoadingSpinner.tsx
+
+ANTES:
+  <div className="flex items-center justify-center min-h-screen ...">
+
+DEPOIS:
+  <div
+    className="flex items-center justify-center min-h-screen ..."
+    role="status"
+    aria-label="Carregando conteudo"
+    aria-live="polite"
+  >
+
+E no texto:
+  ANTES:
+    <p className="text-sm text-muted-foreground animate-pulse">Carregando...</p>
+  DEPOIS:
+    <p className="text-sm text-muted-foreground animate-pulse" aria-hidden="true">Carregando...</p>
+
+------------------------------------------------------------------------
+
+PASSO 4.5 - FAQSection.tsx - Verificar aria no Accordion
+------------------------------------------------------------------------
+Arquivo: /home/AIOS-Total/novo-site-testing/src/components/FAQSection.tsx
+
+O Radix Accordion ja inclui ARIA automaticamente, mas verificar:
+  - Cada AccordionTrigger tem aria-expanded
+  - Cada AccordionContent tem role="region"
+  - A secao tem aria-labelledby
+
+Adicionar se faltar:
+  <section aria-labelledby="faq-title">
+    <h2 id="faq-title">Perguntas Frequentes</h2>
+    ...
+  </section>
+
+------------------------------------------------------------------------
+
+PASSO 4.6 - Revisar contraste de texto
+------------------------------------------------------------------------
+Verificar manualmente estes padroes que podem ter contraste insuficiente:
+
+  1. text-white/40 no Footer (ratio pode ser < 4.5:1 no fundo escuro)
+     -> Aumentar para text-white/60 se necessario
+
+  2. text-muted-foreground em fundos claros
+     -> Verificar se o cinza tem ratio >= 4.5:1
+
+  3. text-[#94A3B8] (cinza claro) em fundo branco
+     -> Ratio aproximado: 3.2:1 - FALHA WCAG AA
+     -> Substituir por text-[#6B7A8D] (ratio ~4.5:1)
+
+  Ferramenta online para checar: https://webaim.org/resources/contrastchecker/
+
+
+================================================================================
+FASE 5 - COMPONENTES VISUAIS (Glass, Spinner, Animacoes)
+Impacto: UX mais polida, animacoes otimizadas
+================================================================================
+
+PASSO 5.1 - Melhorar LoadingSpinner com variantes
+------------------------------------------------------------------------
+Arquivo: /home/AIOS-Total/novo-site-testing/src/components/LoadingSpinner.tsx
+
+Substituir o conteudo completo por:
+
+  interface LoadingSpinnerProps {
+    size?: 'sm' | 'md' | 'lg';
+    fullScreen?: boolean;
+    message?: string;
+  }
+
+  export const LoadingSpinner = ({
+    size = 'md',
+    fullScreen = true,
+    message = 'Carregando...',
+  }: LoadingSpinnerProps) => {
+    const sizeMap = {
+      sm: 'w-8 h-8 border-2',
+      md: 'w-16 h-16 border-4',
+      lg: 'w-24 h-24 border-4',
+    };
+
+    const containerClass = fullScreen
+      ? 'flex items-center justify-center min-h-screen bg-gradient-to-br from-background via-background to-muted/20'
+      : 'flex items-center justify-center py-12';
+
+    return (
+      <div className={containerClass} role="status" aria-label="Carregando conteudo" aria-live="polite">
+        <div className="flex flex-col items-center gap-4">
+          <div className="relative">
+            <div className={`${sizeMap[size]} border-primary/20 rounded-full`} />
+            <div className={`absolute top-0 left-0 ${sizeMap[size]} border-transparent border-t-primary rounded-full animate-spin`} />
+          </div>
+          <p className="text-sm text-muted-foreground animate-pulse" aria-hidden="true">{message}</p>
+        </div>
+      </div>
+    );
+  };
+
+  export default LoadingSpinner;
+
+------------------------------------------------------------------------
+
+PASSO 5.2 - Corrigir z-index do WhatsAppButton
+------------------------------------------------------------------------
+Arquivo: /home/AIOS-Total/novo-site-testing/src/components/WhatsAppButton.tsx
+
+Linha ~20:
+  ANTES:
+    <div className="fixed bottom-6 right-6 z-50 flex items-center gap-3">
+  DEPOIS:
+    <div
+      className="fixed bottom-6 right-6 z-40 flex items-center gap-3"
+      role="region"
+      aria-label="Contato via WhatsApp"
+    >
+
+Motivo: z-50 conflita com modais (Dialog do Radix usa z-50).
+z-40 garante que o botao fica abaixo de modais mas acima do conteudo.
+
+------------------------------------------------------------------------
+
+PASSO 5.3 - LiquidGlassCard.tsx - Usar efeito glass real
+------------------------------------------------------------------------
+Arquivo: /home/AIOS-Total/novo-site-testing/src/components/dashboard/LiquidGlassCard.tsx
+
+Linha ~57:
+  ANTES:
+    <div className="group relative overflow-hidden rounded-3xl p-6 transition-all duration-300 hover:-translate-y-1 hover:shadow-xl bg-card border border-black/[0.05] h-full">
+  DEPOIS:
+    <div className="group relative overflow-hidden rounded-3xl p-6 transition-all duration-300 hover:-translate-y-1 hover:shadow-xl glass-effect h-full">
+
+Isso ativa o backdrop-filter: blur(8px) definido no index.css (linhas 470-476),
+dando o visual "liquid glass" real ao inves de um card solido.
+
+------------------------------------------------------------------------
+
+PASSO 5.4 - Mover animacoes marquee para Tailwind config
+------------------------------------------------------------------------
+Arquivo: /home/AIOS-Total/novo-site-testing/src/components/AnimatedChatMessages.tsx
+
+5.4a) REMOVER o bloco <style dangerouslySetInnerHTML> (linhas ~93-109):
+  Deletar todo o bloco:
+    <style dangerouslySetInnerHTML={{__html: `...`}} />
+
+5.4b) Adicionar no tailwind.config.ts, secao keyframes:
+  'marquee-left': {
+    from: { transform: 'translateX(0)' },
+    to: { transform: 'translateX(-33.333%)' },
+  },
+  'marquee-right': {
+    from: { transform: 'translateX(-33.333%)' },
+    to: { transform: 'translateX(0)' },
+  },
+
+5.4c) Adicionar na secao animation do tailwind.config.ts:
+  'marquee-left': 'marquee-left var(--marquee-speed, 40s) linear infinite',
+  'marquee-right': 'marquee-right var(--marquee-speed, 50s) linear infinite',
+
+5.4d) No componente, usar classes Tailwind:
+  ANTES:
+    style={{ animation: `marquee-left ${speed}s linear infinite` }}
+  DEPOIS:
+    className="animate-marquee-left"
+    style={{ '--marquee-speed': `${speed}s` } as React.CSSProperties}
+
+------------------------------------------------------------------------
+
+PASSO 5.5 - Remover duplicacao de keyframe fade-in
+------------------------------------------------------------------------
+O @keyframes fade-in esta definido em DOIS lugares:
+  1. src/index.css (linhas 253-261)
+  2. tailwind.config.ts (na secao keyframes)
+
+Manter APENAS no tailwind.config.ts (que ja define a duracao).
+Remover de src/index.css as linhas 253-261:
+
+  DELETAR:
+    @keyframes fade-in {
+      from {
+        opacity: 0;
+      }
+      to {
+        opacity: 1;
+      }
+    }
+
+
+================================================================================
+FASE 6 - SEO E META TAGS (index.html)
+Impacto: Melhor indexacao, preview em redes sociais, performance percebida
+================================================================================
+
+PASSO 6.1 - Completar meta tags
+------------------------------------------------------------------------
+Arquivo: /home/AIOS-Total/novo-site-testing/index.html
+
+Adicionar DENTRO do <head>, apos as meta tags existentes:
+
+  <!-- Meta tags faltantes -->
+  <meta name="theme-color" content="#00E676" />
+  <meta name="theme-color" content="#0B1220" media="(prefers-color-scheme: dark)" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+  <!-- Open Graph completo -->
+  <meta property="og:url" content="https://totalassistente.com" />
+  <meta property="og:description" content="Seu assistente inteligente para financas e agenda direto no WhatsApp" />
+  <meta property="og:image" content="https://totalassistente.com/og-image.jpg" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:locale" content="pt_BR" />
+  <meta property="og:site_name" content="Total Assistente" />
+
+  <!-- Twitter completo -->
+  <meta name="twitter:description" content="Seu assistente inteligente para financas e agenda direto no WhatsApp" />
+  <meta name="twitter:image" content="https://totalassistente.com/og-image.jpg" />
+
+  <!-- DNS Prefetch para APIs externas -->
+  <link rel="dns-prefetch" href="https://fonts.googleapis.com" />
+  <link rel="dns-prefetch" href="https://fonts.gstatic.com" />
+
+  NOTA: Criar imagem og-image.jpg (1200x630px) e colocar em /public/
+
+------------------------------------------------------------------------
+
+PASSO 6.2 - Adicionar JSON-LD (Structured Data)
+------------------------------------------------------------------------
+Arquivo: /home/AIOS-Total/novo-site-testing/index.html
+
+Adicionar ANTES do </head>:
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Total Assistente",
+    "description": "Assistente inteligente para financas e agenda via WhatsApp",
+    "applicationCategory": "FinanceApplication",
+    "operatingSystem": "Web",
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "BRL"
+    }
+  }
+  </script>
+
+------------------------------------------------------------------------
+
+PASSO 6.3 - Otimizar carregamento de fontes
+------------------------------------------------------------------------
+Arquivo: /home/AIOS-Total/novo-site-testing/index.html
+
+O carregamento atual usa dupla estrategia (preload + print media hack).
+Simplificar:
+
+  ANTES:
+    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+
+  DEPOIS:
+    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" />
+
+  Alternativa melhor (self-host para performance maxima):
+  - Baixar Inter do Google Fonts
+  - Colocar em /public/fonts/
+  - Importar via @font-face no index.css
+  - Remove dependencia externa (elimina request para Google)
+
+
+================================================================================
+FASE 7 - REMOCAO DE CODIGO MORTO (Limpeza final)
+Impacto: -858+ linhas, bundle menor, manutencao mais facil
+================================================================================
+
+PASSO 7.1 - Deletar UnifiedDashboard.tsx (858 linhas mortas)
+------------------------------------------------------------------------
+Este arquivo e uma copia completa do NewDashboard e NAO e importado
+em nenhum lugar do App.tsx.
+
+  rm src/pages/UnifiedDashboard.tsx
+
+Validacao:
+  grep -rn "UnifiedDashboard" src/
+  (deve retornar vazio)
+
+------------------------------------------------------------------------
+
+PASSO 7.2 - Deletar Plans.tsx (wrapper desnecessario)
+------------------------------------------------------------------------
+Plans.tsx apenas importa e re-exporta NewPlans.tsx:
+
+  export const Plans = () => {
+    return <NewPlans />;
+  };
+
+  rm src/pages/Plans.tsx
+
+Validacao:
+  grep -rn "Plans" src/App.tsx
+  (confirmar que nenhuma rota usa Plans, todas usam NewPlans)
+
+------------------------------------------------------------------------
+
+PASSO 7.3 - Deletar Signup.tsx (deprecated)
+------------------------------------------------------------------------
+Signup.tsx apenas redireciona para /planos:
+
+  export const Signup = () => {
+    return <Navigate to="/planos" replace />;
+  };
+
+Nenhuma rota no App.tsx usa este componente (/signup ja vai para Account).
+
+  rm src/pages/Signup.tsx
+
+Validacao:
+  grep -rn "Signup" src/App.tsx
+  grep -rn "from.*Signup" src/
+  (confirmar que nao ha imports)
+
+------------------------------------------------------------------------
+
+PASSO 7.4 - Limpar imports nao utilizados
+------------------------------------------------------------------------
+Rodar o linter para detectar imports mortos:
+
+  cd /home/AIOS-Total/novo-site-testing
+  npx eslint src/ --rule '{"no-unused-vars": "warn", "@typescript-eslint/no-unused-vars": "warn"}' --fix
+
+Ou usar o TypeScript compiler:
+  npx tsc --noEmit 2>&1 | grep "is declared but"
+
+Corrigir cada warning removendo o import nao utilizado.
+
+
+================================================================================
+FASE 8 - VALIDACAO E TESTES
+================================================================================
+
+PASSO 8.1 - Build de producao
+------------------------------------------------------------------------
+  cd /home/AIOS-Total/novo-site-testing
+  npm run build
+
+Verificar:
+  - Build completa sem erros
+  - Tamanho do bundle (comparar com ANTES)
+  - Nenhum warning de chunk size > 500KB
+
+------------------------------------------------------------------------
+
+PASSO 8.2 - Verificar que nada quebrou
+------------------------------------------------------------------------
+  npm run lint
+  npm run preview
+
+Testar manualmente:
+  [ ] Landing page carrega corretamente
+  [ ] Hero section visual correto
+  [ ] Footer visual correto
+  [ ] Pricing section visual correto
+  [ ] Dark mode funciona em todas as paginas
+  [ ] Light mode funciona em todas as paginas
+  [ ] Graficos renderizam no dashboard
+  [ ] Modais abrem/fecham corretamente
+  [ ] WhatsApp button NAO aparece sobre modais
+  [ ] Toast notifications funcionam (Sonner)
+  [ ] Loading spinner aparece no lazy load
+  [ ] Animacoes do chat marquee funcionam
+
+------------------------------------------------------------------------
+
+PASSO 8.3 - Medir performance
+------------------------------------------------------------------------
+Usar o Lighthouse no Chrome DevTools:
+
+  1. Abrir o site em Chrome
+  2. F12 -> Lighthouse -> Performance
+  3. Rodar audit
+  4. Comparar metricas ANTES vs DEPOIS:
+
+  Metricas esperadas apos otimizacao:
+    FCP (First Contentful Paint): < 1.5s (era ~2.5s)
+    LCP (Largest Contentful Paint): < 2.5s (era ~4s)
+    CLS (Cumulative Layout Shift): < 0.1
+    TTI (Time to Interactive): < 3.5s (era ~5s)
+    Bundle total: < 1.5MB (era ~3.5MB)
+
+------------------------------------------------------------------------
+
+PASSO 8.4 - Checklist final
+------------------------------------------------------------------------
+  [ ] chart.js e react-chartjs-2 removidos
+  [ ] bootstrap-icons removido, todos BIcon migrados para Lucide
+  [ ] Radix Toast removido, apenas Sonner ativo
+  [ ] jspdf e xlsx com lazy loading
+  [ ] Vite config com manual chunks otimizados
+  [ ] Cores hardcoded substituidas por tokens CSS
+  [ ] ARIA labels em charts e pricing
+  [ ] LoadingSpinner com role="status"
+  [ ] WhatsApp button z-40
+  [ ] Glass effect no LiquidGlassCard
+  [ ] Marquee animations no Tailwind config
+  [ ] Meta tags completas no index.html
+  [ ] JSON-LD adicionado
+  [ ] Arquivos mortos deletados (UnifiedDashboard, Plans, Signup)
+  [ ] Build sem erros
+  [ ] Lighthouse score > 90
+
+
+================================================================================
+RESUMO DE IMPACTO ESPERADO
+================================================================================
+
+  ANTES                          DEPOIS (estimado)
+  --------------------------------------------------------
+  Bundle: ~3.5MB                 Bundle: ~1.2MB (-65%)
+  Dependencias: 46               Dependencias: 42 (-4)
+  Codigo morto: 870+ linhas      Codigo morto: 0
+  Cores hardcoded: 22+           Cores hardcoded: 0
+  ARIA issues: 8+                ARIA issues: 0
+  Toast systems: 2               Toast system: 1
+  Icon libraries: 2              Icon library: 1
+  Chart libraries: 2             Chart library: 1
+  Lighthouse perf: ~60           Lighthouse perf: ~90+
+  FCP: ~2.5s                     FCP: ~1.5s
+  LCP: ~4.0s                     LCP: ~2.5s
+
+================================================================================
+FIM DO GUIA
+Siga as fases na ordem. Cada fase pode ser commitada separadamente.
+Commits sugeridos:
+  1. "perf: remove unused dependencies (chart.js, bootstrap-icons)"
+  2. "perf: optimize vite build with manual chunks and compression"
+  3. "fix: replace hardcoded colors with CSS tokens"
+  4. "a11y: add ARIA labels to charts and pricing section"
+  5. "ui: improve glass effects, spinner and animations"
+  6. "seo: complete meta tags and add structured data"
+  7. "chore: remove dead code (UnifiedDashboard, Plans, Signup)"
+================================================================================
