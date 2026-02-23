@@ -1,0 +1,173 @@
+==============================================================================
+FIX v2 - CONFLITO DE HORÁRIO COM SUPABASE NATIVO (SEM CODE COM LOOP)
+==============================================================================
+
+ARQUIVO: fix-conflito-horario-v2-workflow-principal.json
+
+O problema do v1 era o Code node fazendo httpRequest em loop interno,
+o que travava o n8n. Esta versão usa o node Supabase NATIVO com
+filterString (Get Many) — mesmo padrão do Get many rows1 que já existia.
+
+==============================================================================
+O QUE MUDOU NO WORKFLOW PRINCIPAL
+==============================================================================
+
+NENHUM node existente foi removido. Apenas foram ADICIONADOS nodes novos
+entre a criação do evento e o envio da mensagem.
+
+
+----------------------------------------------
+PATH EVENTO ÚNICO (If7 = TRUE)
+----------------------------------------------
+
+ANTES:
+  Redis2 → HTTP Create Calendar Tool2 → HTTP Request (template WA)
+
+DEPOIS:
+  Redis2 → HTTP Create Calendar Tool2
+    → [NOVO] Buscar Conflitos (Unico)      ← Supabase nativo, Get Many
+    → [NOVO] Tem Conflito? (Unico)         ← If node
+      ├─ TRUE  → [NOVO] Aviso Conflito (Unico) → HTTP Request (template WA)
+      └─ FALSE → HTTP Request (template WA)
+
+NODES NOVOS (3):
+
+  1. "Buscar Conflitos (Unico)"
+     - Tipo: Supabase (n8n-nodes-base.supabase)
+     - Operation: Get Many (getAll)
+     - Table: calendar
+     - Filter Type: String
+     - Filter String:
+       user_id=eq.{{ $('setar_user').item.json.id_user }}
+       &start_event=lt.{{ $('Switch2').item.json.tool.data_fim_evento }}
+       &end_event=gt.{{ $('Switch2').item.json.tool.data_inicio_evento }}
+       &select=id,event_name,start_event,end_event
+     - Return All: true
+     - Always Output Data: true (marcado)
+     - Credential: Total Supabase (já existente)
+
+  2. "Tem Conflito? (Unico)"
+     - Tipo: If
+     - Condição:
+       {{ $('Buscar Conflitos (Unico)').all()
+         .filter(i => i.json.id && i.json.event_name !== $('Switch2').item.json.tool.nome_evento)
+         .length }} > 0
+     - Explicação: filtra os resultados removendo o evento recém-criado
+       (mesmo nome), e checa se sobrou algo = conflito real
+
+  3. "Aviso Conflito (Unico)"
+     - Tipo: WhatsApp Send
+     - Texto:
+       ⚠️ *Atenção:* o evento *{{ nome }}* ({{ data_formatada }})
+       coincide com X evento(s) no mesmo horário:
+       - Nome evento existente 1
+       - Nome evento existente 2
+       Verifique sua agenda.
+
+
+----------------------------------------------
+PATH MÚLTIPLOS EVENTOS (If7 = FALSE)
+----------------------------------------------
+
+ANTES:
+  Redis7 → Send message2
+
+DEPOIS:
+  Redis7
+    → [NOVO] Preparar Range (Batch)          ← Code simples, SEM loop
+    → [NOVO] Buscar Conflitos (Batch)        ← Supabase nativo, Get Many
+    → [NOVO] Filtrar Conflitos (Batch)       ← Code simples, SEM httpRequest
+    → [NOVO] Tem Conflito? (Batch)           ← If node
+      ├─ TRUE  → [NOVO] Aviso Conflito (Batch) → Send message2
+      └─ FALSE → [NOVO] Sem Conflito (Batch)   → Send message2
+
+NODES NOVOS (5):
+
+  1. "Preparar Range (Batch)"
+     - Tipo: Code
+     - O que faz: pega o menor start e maior end de todos os eventos
+       do batch e emite UM ÚNICO item. Isso permite fazer UMA query
+       no Supabase que cobre todo o range de tempo do batch.
+     - NÃO faz httpRequest, NÃO faz loop de queries.
+     - Retorna: { user_id, range_start, range_end, nomes_batch }
+
+  2. "Buscar Conflitos (Batch)"
+     - Tipo: Supabase (n8n-nodes-base.supabase)
+     - Operation: Get Many (getAll)
+     - Table: calendar
+     - Filter Type: String
+     - Filter String:
+       user_id=eq.{{ $json.user_id }}
+       &start_event=lt.{{ $json.range_end }}
+       &end_event=gt.{{ $json.range_start }}
+       &select=id,event_name,start_event,end_event
+     - Return All: true
+     - Always Output Data: true
+     - Credential: Total Supabase
+
+  3. "Filtrar Conflitos (Batch)"
+     - Tipo: Code
+     - O que faz: pega os resultados do Supabase e REMOVE os eventos
+       cujo nome bate com os do batch (são os recém-criados).
+       Se sobrar algo = conflito real com evento pré-existente.
+     - NÃO faz httpRequest.
+     - Retorna: { tem_conflito, qtd, msg_conflito }
+
+  4. "Tem Conflito? (Batch)"
+     - Tipo: If
+     - Condição: {{ $json.tem_conflito }} === true
+
+  5. "Aviso Conflito (Batch)"
+     - Tipo: WhatsApp Send
+     - Texto da mensagem consolidada
+
+
+==============================================================================
+COMO IMPLEMENTAR
+==============================================================================
+
+OPÇÃO A - Importar o JSON inteiro:
+  1. No n8n, vá em Workflows → Import from File
+  2. Importe fix-conflito-horario-v2-workflow-principal.json
+  3. Vai criar um workflow novo com todos os nodes
+  4. Copie apenas os nodes NOVOS para seu workflow existente
+  5. Reconecte conforme descrito acima
+
+OPÇÃO B - Criar os nodes manualmente:
+  1. No seu workflow principal, localize o ponto após o HTTP Create
+     Calendar Tool2 (path único) e após o Redis7 (path batch)
+  2. Crie os nodes conforme descrito acima
+  3. Use os mesmos filterStrings do JSON
+
+IMPORTANTE:
+  - A credential "Total Supabase" (id: kQkN5PrZm2GihQfS) já existe
+    no seu n8n, é a mesma usada em outros workflows
+  - Não precisa configurar apikey manual — o node Supabase nativo
+    usa a credential automaticamente
+  - O "Always Output Data" precisa estar marcado nos nodes Supabase
+    para não quebrar quando não houver conflitos (retorna item vazio)
+
+
+==============================================================================
+POR QUE NÃO TRAVA MAIS
+==============================================================================
+
+v1 (travava):
+  Code node com for loop → dentro do loop chamava this.helpers.httpRequest()
+  → N chamadas HTTP sequenciais dentro de um único node → trava o n8n
+
+v2 (não trava):
+  Code node "Preparar Range" → apenas calcula min/max, zero HTTP
+  Supabase node nativo → UMA query, gerenciada pelo n8n
+  Code node "Filtrar" → apenas filtra array em memória, zero HTTP
+
+
+==============================================================================
+TESTES
+==============================================================================
+
+1. Criar 1 evento sem conflito → sem aviso, recebe template normal
+2. Criar 1 evento com conflito → recebe aviso + template
+3. Criar 3 eventos sem conflito prévio → sem aviso, recebe mensagem normal
+4. Criar 3 eventos, 1 conflita com existente → UM aviso + mensagem
+5. Criar 3 eventos no mesmo horário entre si → sem aviso (são do batch)

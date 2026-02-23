@@ -1,0 +1,1011 @@
+{
+  "name": "Fix Conflito v2 - Workflow Principal com Supabase Nativo",
+  "nodes": [
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://totalassistente.com.br/webhook/5e0f5e77-aea5-4784-8a85-58e8eaf49c30",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "nome_evento",
+              "value": "={{ $json.tool.nome_evento }}"
+            },
+            {
+              "name": "descricao_evento",
+              "value": "={{ $json.tool.descricao_evento }}"
+            },
+            {
+              "name": "data_inicio_evento",
+              "value": "={{ $json.tool.data_inicio_evento }}"
+            },
+            {
+              "name": "data_fim_evento",
+              "value": "={{ $json.tool.data_fim_evento }}"
+            },
+            {
+              "name": "id_user",
+              "value": "={{ $('setar_user').item.json.id_user }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [3312, 1056],
+      "id": "911ae6e5-f04a-42bc-b4a6-b99387d04f6d",
+      "name": "HTTP - Create Calendar Tool",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "fSx1ApZPcITxgUNE",
+          "name": "Avelum Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const origem = $items(\"Code in JavaScript\", 0, 0);\n\nreturn $input.all().map((item, index) => {\n  const base = origem[index]?.json || {};\n  const evento = base.tool || {};\n  const isoString = String(evento.data_inicio_evento || '');\n\n  if (!isoString) {\n    return {\n      json: {\n        ...item.json,\n        data_inicio_evento_formatado: null,\n        erro_formatacao_data: 'data_inicio_evento não encontrada em Code in JavaScript'\n      }\n    };\n  }\n\n  const [datePart, timeWithOffset] = isoString.split('T');\n  const [year, month, day] = datePart.split('-');\n  const [timePart] = timeWithOffset.split(/[+-]/);\n  const [hour, minute] = timePart.split(':');\n  const dataFormatada = `${day}/${month}/${year}, às ${hour}h${minute}min`;\n\n  return {\n    json: {\n      ...item.json,\n      data_inicio_evento_formatado: dataFormatada,\n      nome_evento: evento.nome_evento || ''\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3312, 1376],
+      "id": "9fba8a1e-9e63-4dd2-a962-e923987540fb",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "4873681b-8241-4ea3-bb5f-ac55db43dcee",
+              "leftValue": "={{ $('Switch2').item.json.parsed_output.tool }}",
+              "rightValue": 1,
+              "operator": {
+                "type": "array",
+                "operation": "lengthEquals",
+                "rightType": "number"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [3488, 1376],
+      "id": "ab4eadbf-a090-41ce-bc63-8f08ff4f5224",
+      "name": "If7"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "propertyName": "Lista",
+        "key": "={{ $('Evolution API- Take all').item.json.phone }}_debounce",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [3936, 1168],
+      "id": "4e172683-d3c6-4250-9b6a-962cd14a74d9",
+      "name": "lastGet3",
+      "credentials": {
+        "redis": {
+          "id": "amNI4dVfk3J8Bz0v",
+          "name": "Redis Germany"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "87e14226-bac1-4dd1-8c86-bd5bc02b17d6",
+              "leftValue": "={{ $('lastGet3').item.json.Lista.length }}",
+              "rightValue": "={{ $('firstGet').item.json.Lista.length }}",
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "ef168b18-85fd-4c76-86f6-5324d5a92ec4",
+              "leftValue": "={{ $itemIndex }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [4064, 1168],
+      "id": "f9a0fd23-661f-49f2-aff4-4dd54690b56e",
+      "name": "If2"
+    },
+    {
+      "parameters": {
+        "operation": "delete",
+        "key": "={{ $('Evolution API- Take all').item.json.phone }}_debounce"
+      },
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [4256, 1136],
+      "id": "badfe2da-0d6d-4bfc-b0f7-14486ccb141e",
+      "name": "Redis2",
+      "credentials": {
+        "redis": {
+          "id": "amNI4dVfk3J8Bz0v",
+          "name": "Redis Germany"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [4224, 1296],
+      "id": "57f127b4-80d0-456f-b63c-a7367530e122",
+      "name": "No Operation, do nothing4"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://totalassistente.com.br/webhook/5e0f5e77-aea5-4784-8a85-58e8eaf49c30",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "nome_evento",
+              "value": "={{ $('Switch2').item.json.tool.nome_evento }}"
+            },
+            {
+              "name": "descricao_evento",
+              "value": "={{ $('Switch2').item.json.tool.descricao_evento }}"
+            },
+            {
+              "name": "data_inicio_evento",
+              "value": "={{ $('Switch2').item.json.tool.data_inicio_evento }}"
+            },
+            {
+              "name": "data_fim_evento",
+              "value": "={{ $('Switch2').item.json.tool.data_fim_evento }}"
+            },
+            {
+              "name": "id_user",
+              "value": "={{ $('setar_user').item.json.id_user }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [4416, 1152],
+      "id": "d0ac688d-1ad9-4686-815c-0b11172c2505",
+      "name": "HTTP - Create Calendar Tool2",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "fSx1ApZPcITxgUNE",
+          "name": "Avelum Credential"
+        }
+      }
+    },
+
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "calendar",
+        "filterType": "string",
+        "filterString": "=user_id=eq.{{ $('setar_user').item.json.id_user }}&start_event=lt.{{ $('Switch2').item.json.tool.data_fim_evento }}&end_event=gt.{{ $('Switch2').item.json.tool.data_inicio_evento }}&select=id,event_name,start_event,end_event",
+        "returnAll": true
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [4608, 1152],
+      "id": "buscar-conflitos-unico-001",
+      "name": "Buscar Conflitos (Unico)",
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "kQkN5PrZm2GihQfS",
+          "name": "Total Supabase"
+        }
+      }
+    },
+
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "conflito-unico-check",
+              "leftValue": "={{ $('Buscar Conflitos (Unico)').all().filter(i => i.json.id && i.json.event_name !== $('Switch2').item.json.tool.nome_evento).length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [4800, 1152],
+      "id": "tem-conflito-unico-001",
+      "name": "Tem Conflito? (Unico)"
+    },
+
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "744582292082931",
+        "recipientPhoneNumber": "=+{{ $('premium').item.json.body.user_phone }}",
+        "textBody": "=⚠️ *Atenção:* o evento *{{ $('Switch2').item.json.tool.nome_evento }}* ({{ $('Code in JavaScript1').item.json.data_inicio_evento_formatado }}) coincide com {{ $('Buscar Conflitos (Unico)').all().filter(i => i.json.id && i.json.event_name !== $('Switch2').item.json.tool.nome_evento).length }} evento(s) no mesmo horário:\n\n{{ $('Buscar Conflitos (Unico)').all().filter(i => i.json.id && i.json.event_name !== $('Switch2').item.json.tool.nome_evento).map(i => '- ' + i.json.event_name).join('\\n') }}\n\nVerifique sua agenda.",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [5008, 1056],
+      "id": "aviso-conflito-unico-wa",
+      "name": "Aviso Conflito (Unico)",
+      "webhookId": "f5115870-a475-4765-856e-b711b849aabd",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "j0RGyMFfqZfWpCBu",
+          "name": "WhatsApp account 2"
+        }
+      }
+    },
+
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v23.0/744582292082931/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  messaging_product: 'whatsapp',\n  to: $('premium').item.json.body.user_phone,\n  type: 'template',\n  template: {\n    name: 'novo_evento_do_usuario',\n    language: { code: 'pt_BR' },\n    components: [\n      {\n        type: 'body',\n        parameters: [\n          { type: 'text', text: String( $('Switch2').item.json.parsed_output.tool[0].nome_evento  || '') },\n          { type: 'text', text: String($('Code in JavaScript1').item.json.data_inicio_evento_formatado || '')  }\n        ]\n      }\n    ]\n  }\n} }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [5200, 1152],
+      "id": "d1897201-b067-445f-9e1d-dea9aa4d357b",
+      "name": "HTTP Request",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "TDDrQvr1s0RxXTTC",
+          "name": "WhatsApp Header Auth"
+        }
+      }
+    },
+
+
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://totalassistente.com.br/webhook/5e0f5e77-aea5-4784-8a85-58e8eaf49c30",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "nome_evento",
+              "value": "={{ $('Switch2').item.json.tool.nome_evento }}"
+            },
+            {
+              "name": "descricao_evento",
+              "value": "={{ $('Switch2').item.json.tool.descricao_evento }}"
+            },
+            {
+              "name": "data_inicio_evento",
+              "value": "={{ $('Switch2').item.json.tool.data_inicio_evento }}"
+            },
+            {
+              "name": "data_fim_evento",
+              "value": "={{ $('Switch2').item.json.tool.data_fim_evento }}"
+            },
+            {
+              "name": "id_user",
+              "value": "={{ $('setar_user').item.json.id_user }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [3632, 1520],
+      "id": "71e5f0c3-b2a7-41ed-be0f-49c62738dc8d",
+      "name": "HTTP - Create Calendar Tool1",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "fSx1ApZPcITxgUNE",
+          "name": "Avelum Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [3760, 1520],
+      "id": "57a82bf5-e91f-44b4-a9b5-28dcb3fb4b5a",
+      "name": "Aggregate1"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "propertyName": "Lista",
+        "key": "={{ $('Evolution API- Take all').item.json.phone }}_debounce",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [3904, 1536],
+      "id": "58b0d80e-0658-4152-a8b8-69c575f6db34",
+      "name": "lastGet6",
+      "credentials": {
+        "redis": {
+          "id": "amNI4dVfk3J8Bz0v",
+          "name": "Redis Germany"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "87e14226-bac1-4dd1-8c86-bd5bc02b17d6",
+              "leftValue": "={{ $('lastGet6').item.json.Lista.length }}",
+              "rightValue": "={{ $('firstGet').item.json.Lista.length }}",
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [4096, 1600],
+      "id": "e1b7dea0-599f-4227-a4ee-5bb7bfca5d96",
+      "name": "If6"
+    },
+    {
+      "parameters": {
+        "operation": "delete",
+        "key": "={{ $('Evolution API- Take all').item.json.phone }}_debounce"
+      },
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [4240, 1472],
+      "id": "746b9f9b-026d-4934-91b6-0aaa92513c0f",
+      "name": "Redis7",
+      "credentials": {
+        "redis": {
+          "id": "amNI4dVfk3J8Bz0v",
+          "name": "Redis Germany"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [4224, 1616],
+      "id": "ce9cfc5f-ba6a-4c4a-b82a-581cbc05c906",
+      "name": "No Operation, do nothing7"
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// Pega o range total do batch (menor start, maior end)\n// para fazer UMA UNICA query no Supabase\nconst toolArray = $('Switch2').item.json.parsed_output?.tool || [];\nconst userId = $('setar_user').item.json.id_user;\n\nconst starts = toolArray.map(t => t.data_inicio_evento).filter(Boolean).sort();\nconst ends = toolArray.map(t => t.data_fim_evento).filter(Boolean).sort();\n\nconst nomes = toolArray.map(t => t.nome_evento);\n\nreturn [{\n  json: {\n    user_id: userId,\n    range_start: starts[0],\n    range_end: ends[ends.length - 1],\n    nomes_batch: nomes,\n    eventos_batch: toolArray\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4416, 1472],
+      "id": "preparar-range-batch-001",
+      "name": "Preparar Range (Batch)"
+    },
+
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "calendar",
+        "filterType": "string",
+        "filterString": "=user_id=eq.{{ $json.user_id }}&start_event=lt.{{ $json.range_end }}&end_event=gt.{{ $json.range_start }}&select=id,event_name,start_event,end_event",
+        "returnAll": true
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [4608, 1472],
+      "id": "buscar-conflitos-batch-001",
+      "name": "Buscar Conflitos (Batch)",
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "kQkN5PrZm2GihQfS",
+          "name": "Total Supabase"
+        }
+      }
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// Filtra resultados do Supabase:\n// Remove eventos que têm o mesmo nome dos eventos do batch\n// (são os que acabaram de ser criados)\nconst prepNode = $('Preparar Range (Batch)').first().json;\nconst nomesBatch = prepNode.nomes_batch || [];\nconst eventosBatch = prepNode.eventos_batch || [];\n\nconst resultados = $('Buscar Conflitos (Batch)').all()\n  .map(i => i.json)\n  .filter(r => r.id); // remove items vazios\n\n// Remove eventos cujo nome bate com algum do batch\n// (são os recém-criados)\nconst preExistentes = resultados.filter(\n  r => !nomesBatch.includes(r.event_name)\n);\n\nif (preExistentes.length === 0) {\n  return [{ json: { tem_conflito: false } }];\n}\n\n// Monta mensagem consolidada\nconst linhas = preExistentes.map(e => '- ' + (e.event_name || '(sem nome)'));\nconst dedup = [...new Set(linhas)];\n\nreturn [{\n  json: {\n    tem_conflito: true,\n    qtd: dedup.length,\n    msg_conflito: dedup.join('\\n')\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4800, 1472],
+      "id": "filtrar-conflitos-batch-001",
+      "name": "Filtrar Conflitos (Batch)"
+    },
+
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "conflito-batch-check",
+              "leftValue": "={{ $json.tem_conflito }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [4992, 1472],
+      "id": "tem-conflito-batch-001",
+      "name": "Tem Conflito? (Batch)"
+    },
+
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "744582292082931",
+        "recipientPhoneNumber": "=+{{ $('premium').item.json.body.user_phone }}",
+        "textBody": "=⚠️ *Atenção:* seus novos eventos coincidem com {{ $('Filtrar Conflitos (Batch)').item.json.qtd }} evento(s) já existentes:\n\n{{ $('Filtrar Conflitos (Batch)').item.json.msg_conflito }}\n\nVerifique sua agenda.",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [5184, 1392],
+      "id": "aviso-conflito-batch-wa",
+      "name": "Aviso Conflito (Batch)",
+      "webhookId": "f5115870-a475-4765-856e-b711b849aabd",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "j0RGyMFfqZfWpCBu",
+          "name": "WhatsApp account 2"
+        }
+      }
+    },
+
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "744582292082931",
+        "recipientPhoneNumber": "=+{{ $('premium').item.json.body.user_phone }}",
+        "textBody": "={{ $('Code in JavaScript').first().json.parsed_output.mensagem }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [5376, 1472],
+      "id": "0b36842f-f46f-43dc-a6b8-913150d8c368",
+      "name": "Send message2",
+      "webhookId": "f5115870-a475-4765-856e-b711b849aabd",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "j0RGyMFfqZfWpCBu",
+          "name": "WhatsApp account 2"
+        }
+      }
+    },
+
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [5184, 1552],
+      "id": "sem-conflito-batch-001",
+      "name": "Sem Conflito (Batch)"
+    },
+
+
+    {
+      "parameters": {
+        "operation": "delete",
+        "key": "={{ $('Evolution API- Take all').item.json.phone }}_debounce"
+      },
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [3680, 1696],
+      "id": "6edf083e-ab32-43c2-9b43-659373bf5813",
+      "name": "Redis10",
+      "credentials": {
+        "redis": {
+          "id": "amNI4dVfk3J8Bz0v",
+          "name": "Redis Germany"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://totalassistente.com.br/webhook/criar-lembrete-recorrente-total",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "nome_evento",
+              "value": "={{ $('Code in JavaScript').item.json.tool.nome_evento }}"
+            },
+            {
+              "name": "rrule",
+              "value": "={{ $('Code in JavaScript').item.json.tool.rrule }}"
+            },
+            {
+              "name": "dtstart",
+              "value": "={{ $('Code in JavaScript').item.json.tool.dtstart }}"
+            },
+            {
+              "name": "timezone",
+              "value": "={{ $('Code in JavaScript').item.json.tool.timezone }}"
+            },
+            {
+              "name": "until",
+              "value": "={{ $('Code in JavaScript').item.json.tool.until }}"
+            },
+            {
+              "name": "exdates",
+              "value": "={{ $('Code in JavaScript').item.json.tool.exdates }}"
+            },
+            {
+              "name": "channel",
+              "value": "={{ $('Code in JavaScript').item.json.tool.channel }}"
+            },
+            {
+              "name": "user_id",
+              "value": "={{ $('setar_user').item.json.id_user }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [3824, 1696],
+      "id": "71f82a08-aa00-4596-8bfd-f663ca6e9670",
+      "name": "HTTP - Create Calendar Tool3",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "fSx1ApZPcITxgUNE",
+          "name": "Avelum Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "744582292082931",
+        "recipientPhoneNumber": "=+{{ $('premium').item.json.body.user_phone }}",
+        "textBody": "={{ $('Code in JavaScript').item.json.parsed_output.mensagem }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1.1,
+      "position": [3968, 1696],
+      "id": "f50dfc9a-e737-4f1d-822b-9aed14d68676",
+      "name": "Send message5",
+      "webhookId": "7dd60de6-1d9d-48fc-899c-f67768d7c09c",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "j0RGyMFfqZfWpCBu",
+          "name": "WhatsApp account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "744582292082931",
+        "recipientPhoneNumber": "=+{{ $('premium').item.json.body.user_phone }}",
+        "textBody": "=✅ Evento registrado!\n\nNome: {{ $('Switch2').item.json.parsed_output.tool[0].nome_evento }}\nData e hora: {{ $('Code in JavaScript1').item.json.data_inicio_evento_formatado }}\n",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [5200, 1056],
+      "id": "69ca1014-b146-48d2-8dc9-b8b2b9d96acd",
+      "name": "Send message4",
+      "webhookId": "f5115870-a475-4765-856e-b711b849aabd",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "j0RGyMFfqZfWpCBu",
+          "name": "WhatsApp account 2"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "If7",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If7": {
+      "main": [
+        [
+          {
+            "node": "lastGet3",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP - Create Calendar Tool1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "lastGet3": {
+      "main": [
+        [
+          {
+            "node": "If2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If2": {
+      "main": [
+        [
+          {
+            "node": "Redis2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Operation, do nothing4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redis2": {
+      "main": [
+        [
+          {
+            "node": "HTTP - Create Calendar Tool2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP - Create Calendar Tool2": {
+      "main": [
+        [
+          {
+            "node": "Buscar Conflitos (Unico)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar Conflitos (Unico)": {
+      "main": [
+        [
+          {
+            "node": "Tem Conflito? (Unico)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tem Conflito? (Unico)": {
+      "main": [
+        [
+          {
+            "node": "Aviso Conflito (Unico)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aviso Conflito (Unico)": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        []
+      ]
+    },
+
+    "HTTP - Create Calendar Tool1": {
+      "main": [
+        [
+          {
+            "node": "Aggregate1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate1": {
+      "main": [
+        [
+          {
+            "node": "lastGet6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "lastGet6": {
+      "main": [
+        [
+          {
+            "node": "If6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If6": {
+      "main": [
+        [
+          {
+            "node": "Redis7",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Operation, do nothing7",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redis7": {
+      "main": [
+        [
+          {
+            "node": "Preparar Range (Batch)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Range (Batch)": {
+      "main": [
+        [
+          {
+            "node": "Buscar Conflitos (Batch)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar Conflitos (Batch)": {
+      "main": [
+        [
+          {
+            "node": "Filtrar Conflitos (Batch)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filtrar Conflitos (Batch)": {
+      "main": [
+        [
+          {
+            "node": "Tem Conflito? (Batch)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tem Conflito? (Batch)": {
+      "main": [
+        [
+          {
+            "node": "Aviso Conflito (Batch)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Sem Conflito (Batch)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aviso Conflito (Batch)": {
+      "main": [
+        [
+          {
+            "node": "Send message2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sem Conflito (Batch)": {
+      "main": [
+        [
+          {
+            "node": "Send message2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send message2": {
+      "main": [
+        []
+      ]
+    },
+
+    "Redis10": {
+      "main": [
+        [
+          {
+            "node": "HTTP - Create Calendar Tool3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP - Create Calendar Tool3": {
+      "main": [
+        [
+          {
+            "node": "Send message5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send message5": {
+      "main": [
+        []
+      ]
+    },
+    "Send message4": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "c4205d5b77ecfb7c5f0bc3b25969f10bab24d6fe34fb86cd8e32c8dc2fb80e01"
+  }
+}
