@@ -1,0 +1,145 @@
+==============================================================================
+FIX v3 - CONFLITO BATCH SEM CODE NODES (ZERO LOOP)
+==============================================================================
+
+ARQUIVO: fix-conflito-horario-v3-batch-sem-code.json
+
+PROBLEMA DO v2:
+Os Code nodes "Preparar Range" e "Filtrar Conflitos" recebiam múltiplos
+items do fluxo anterior e executavam N vezes, causando loop/lentidão.
+
+SOLUÇÃO v3:
+Substituí TODOS os Code nodes por nodes nativos do n8n:
+- "Preparar Range (Batch)" → virou "Set Range (Batch)" (Edit Fields)
+- "Filtrar Conflitos (Batch)" → virou "Eh Conflito Real?" (If node)
+- "Tem Conflito? (Batch)" → removido (já não precisa)
+
+ZERO Code nodes na detecção de conflito. Só nodes nativos.
+
+
+==============================================================================
+FLUXO DO PATH BATCH (If8 = FALSE, múltiplos eventos)
+==============================================================================
+
+HTTP Create Calendar Tool6 (executa N vezes, 1 por evento)
+  → Aggregate5 (junta tudo em 1 item)
+    → lastGet7 → If9 (debounce)
+      → Redis8 (limpa debounce)
+        → Set Range (Batch)             ← Edit Fields nativo
+          → Buscar Conflitos (Batch)    ← Supabase nativo
+            → Eh Conflito Real?         ← If node nativo
+              ├─ TRUE  → Aviso Conflito → Send message6
+              └─ FALSE → Sem Conflito   → Send message6
+
+
+==============================================================================
+NODES NOVOS (substituem os 3 Code nodes antigos)
+==============================================================================
+
+1. "Set Range (Batch)" — Edit Fields (n8n-nodes-base.set)
+   ─────────────────────────────────────────────────────
+   Substitui o Code "Preparar Range". Calcula tudo via expressões:
+
+   Campo user_id:
+     {{ $('setar_user').item.json.id_user }}
+
+   Campo range_start (menor data de início do batch):
+     {{ $('Switch2').item.json.parsed_output.tool
+        .map(t => t.data_inicio_evento).filter(Boolean).sort()[0] }}
+
+   Campo range_end (maior data de fim do batch):
+     {{ $('Switch2').item.json.parsed_output.tool
+        .map(t => t.data_fim_evento).filter(Boolean).sort().reverse()[0] }}
+
+   Campo nomes_batch (nomes separados por |||):
+     {{ $('Switch2').item.json.parsed_output.tool
+        .map(t => t.nome_evento).join('|||') }}
+
+   → Emite 1 item com esses 4 campos. Sem Code, sem loop.
+
+
+2. "Buscar Conflitos (Batch)" — Supabase nativo
+   ──────────────────────────────────────────────
+   Mesmo de antes, sem mudança:
+   - Operation: Get Many
+   - Table: calendar
+   - Filter String:
+     user_id=eq.{{ $json.user_id }}
+     &start_event=lt.{{ $json.range_end }}
+     &end_event=gt.{{ $json.range_start }}
+     &select=id,event_name,start_event,end_event
+   - Always Output Data: true
+
+
+3. "Eh Conflito Real?" — If node
+   ──────────────────────────────
+   Substitui o Code "Filtrar Conflitos". Filtra direto no If:
+
+   Condição 1: {{ $json.id }} exists
+     → Garante que o item tem dados (não é vazio do alwaysOutputData)
+
+   Condição 2:
+     {{ $('Set Range (Batch)').first().json.nomes_batch
+        .split('|||').includes($json.event_name) }} === false
+     → Remove eventos cujo nome bate com algum do batch
+       (são os recém-criados, não conflitos reais)
+
+   Combinator: AND
+
+   Se as duas condições forem true → é conflito REAL → vai pro aviso
+   Se não → vai pro "Sem Conflito"
+
+
+4. "Aviso Conflito (Batch)" — WhatsApp Send
+   ──────────────────────────────────────────
+   executeOnce: true (envia UMA mensagem, mesmo se tiver N conflitos)
+
+   Texto:
+     ⚠️ *Atenção:* seus novos eventos coincidem com evento(s)
+     já existentes:
+     - {{ $json.event_name }}
+     Verifique sua agenda.
+
+
+5. "Send message6" — WhatsApp Send
+   ─────────────────────────────────
+   executeOnce: true (envia UMA mensagem de confirmação)
+   Recebe tanto do path "Aviso Conflito" quanto do "Sem Conflito"
+
+
+==============================================================================
+POR QUE NÃO TRAVA/LOOPA MAIS
+==============================================================================
+
+1. O "Set Range (Batch)" é um Edit Fields → executa 1 vez, emite 1 item
+2. O Supabase recebe 1 item → faz 1 query → retorna N resultados
+3. O If "Eh Conflito Real?" filtra item a item (nativo, sem Code)
+4. O "Aviso Conflito" tem executeOnce: true → envia 1 msg mesmo com N items
+5. O "Send message6" tem executeOnce: true → envia 1 msg
+
+Nenhum node faz httpRequest interno. Nenhum Code. Nenhum loop.
+
+
+==============================================================================
+O QUE MUDAR NO SEU WORKFLOW
+==============================================================================
+
+1. Delete os 3 nodes antigos:
+   - "Preparar Range (Batch)"
+   - "Filtrar Conflitos (Batch)"
+   - "Tem Conflito? (Batch)"
+
+2. No lugar, coloque:
+   - "Set Range (Batch)" (Edit Fields)
+   - Mantenha "Buscar Conflitos (Batch)" como está
+   - "Eh Conflito Real?" (If node)
+
+3. Conecte:
+   Redis8 → Set Range (Batch) → Buscar Conflitos (Batch)
+   → Eh Conflito Real?
+     TRUE  → Aviso Conflito (Batch)  → Send message6
+     FALSE → Sem Conflito (Batch)    → Send message6
+
+4. Marque executeOnce nos nodes de WhatsApp:
+   - "Aviso Conflito (Batch)" → Settings → Execute Once: ON
+   - "Send message6" → Settings → Execute Once: ON
