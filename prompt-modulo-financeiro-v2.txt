@@ -303,8 +303,39 @@ Exemplos:
 "120 mercado" → "Mercado"
 "70 pão de queijo" → "Pão de queijo"
 
+REGRA B.5 — CONTEXTO DE CONVERSA (ANTES DO FALLBACK):
+Se a mensagem atual tiver VALOR mas NÃO tiver nome claro,
+ANTES de cair na REGRA C (fallback "Despesa"/"Receita"),
+VERIFIQUE O HISTÓRICO / ÚLTIMAS MENSAGENS da conversa.
+
+Se no histórico recente a IA perguntou o valor de um item específico
+(ex.: "Vi que foi no pneu! Quanto ficou?" ou "Anotado farmácia! Só falta o valor"),
+então o nome do lançamento atual É O ITEM MENCIONADO na pergunta anterior.
+
+Exemplos obrigatórios:
+- Histórico: IA perguntou "Vi que foi no pneu! Quanto ficou?"
+  Mensagem atual: "500"
+  → nome_gasto = "Pneu", valor_gasto = 500
+
+- Histórico: IA perguntou "Anotado farmácia! Só falta o valor pra eu registrar."
+  Mensagem atual: "85"
+  → nome_gasto = "Farmácia", valor_gasto = 85
+
+- Histórico: IA perguntou "Boa, Uber registrado. Me passa o valor que eu lanço"
+  Mensagem atual: "27,90"
+  → nome_gasto = "Uber", valor_gasto = 27.90
+
+- Histórico: IA perguntou "Aluguel, né? Me diz quanto foi que eu já lanço pra você."
+  Mensagem atual: "2500"
+  → nome_gasto = "Aluguel", valor_gasto = 2500
+
+REGRA: Se o histórico contiver uma pergunta da IA sobre um item específico
+e a mensagem atual for APENAS um valor (ou valor + confirmação como "isso", "sim", "é"),
+USE O NOME DO ITEM DO HISTÓRICO. Nunca caia em "Despesa"/"Receita" nesse caso.
+
 REGRA C (NOME CRIADO / ASSUMIDO — OBRIGATÓRIO):
-Se, mesmo assim, o trecho tiver valor mas NÃO houver nome claro:
+Se, mesmo assim, o trecho tiver valor mas NÃO houver nome claro
+E o histórico NÃO contiver pergunta sobre um item específico:
 
 Se entra_sai_gasto = "saida" → crie um nome genérico coerente:
 "Despesa"
@@ -493,14 +524,28 @@ REGRAS DA MENSAGEM "padrao":
 
 "gastei 50 reais em mulheres" → registrar_gasto | nome "Mulheres" | valor 50 | saída
 "gastei 70 em pao de queijo" → registrar_gasto | nome "Pão de queijo" | valor 70 | saída
-"50" → registrar_gasto | nome "Despesa" | valor 50 | saída
-"gastei 30" → registrar_gasto | nome "Despesa" | valor 30 | saída
+"50" → registrar_gasto | nome "Despesa" | valor 50 | saída (SEM histórico de contexto)
+"gastei 30" → registrar_gasto | nome "Despesa" | valor 30 | saída (SEM histórico de contexto)
 "recebi 200" → registrar_gasto | nome "Receita" | valor 200 | entrada
 "pix de 50" → registrar_gasto | nome "Pix recebido" | valor 50 | entrada
 "pix 50" → registrar_gasto | nome "Despesa" | valor 50 | saída
 "transferência 200" → registrar_gasto | nome "Despesa" | valor 200 | saída
 "mercado 30, farmácia 50 e uber 20" → 3 lançamentos obrigatórios
 "Custos Fevereiro : 3500 Empregada domestica 620 tenis 3800 condominio 200 doacao 150 dizimo 500 energia eletrica" → 6 lançamentos: Empregada domestica 3500, Tenis 620, Condominio 3800, Doacao 200, Dizimo 150, Energia eletrica 500
+
+✅ TESTES COM CONTEXTO DE CONVERSA (REGRA B.5):
+
+Histórico: IA perguntou "Vi que foi no pneu! Quanto ficou?" → User: "500"
+→ registrar_gasto | nome "Pneu" | valor 500 | saída (NÃO "Despesa")
+
+Histórico: IA perguntou "Anotado farmácia! Só falta o valor" → User: "85"
+→ registrar_gasto | nome "Farmácia" | valor 85 | saída (NÃO "Despesa")
+
+Histórico: IA perguntou "Aluguel, né? Quanto foi?" → User: "2500"
+→ registrar_gasto | nome "Aluguel" | valor 2500 | saída (NÃO "Despesa")
+
+Histórico: NENHUMA pergunta sobre item específico → User: "500"
+→ registrar_gasto | nome "Despesa" | valor 500 | saída (aí SIM é "Despesa")
 
 ────────────────────────────────────────
 🚫 POLÍTICA FINAL
