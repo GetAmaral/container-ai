@@ -1,0 +1,134 @@
+════════════════════════════════════════════════════════════════
+DIAGNÓSTICO — SYNC BIDIRECIONAL GOOGLE CALENDAR (NÃO FUNCIONA)
+════════════════════════════════════════════════════════════════
+
+RESUMO DO PROBLEMA:
+  Eventos criados pelo usuário direto no Google Calendar NÃO aparecem
+  na agenda do app (Supabase). A sincronização Google → App falha silenciosamente.
+
+════════════════════════════════════════════════════════════════
+BUG #1 (CRÍTICO): singleEvents=true + syncToken = 400 ERROR
+════════════════════════════════════════════════════════════════
+
+ONDE: função performIncrementalSync() em google-calendar/index.ts
+
+PROBLEMA:
+  A Google Calendar API PROÍBE usar syncToken e singleEvents=true juntos.
+  Documentação oficial: "syncToken and singleEvents are mutually exclusive"
+
+  No código atual, singleEvents=true é setado SEMPRE, independente de ter syncToken:
+
+    if (nextPageToken) {
+      url.searchParams.set('pageToken', nextPageToken);
+    } else if (syncToken) {
+      url.searchParams.set('syncToken', syncToken);    // ← syncToken presente
+    } else { ... }
+
+    url.searchParams.set('singleEvents', 'true');       // ← SEMPRE setado
+
+  Resultado: a API do Google retorna 400 (Bad Request).
+  O erro NÃO é tratado (só trata 410), então a sync falha silenciosamente.
+
+IMPACTO:
+  - O performInitialSync() funciona (não usa syncToken)
+  - O performInitialSync() salva um syncToken no banco
+  - Toda sincronização POSTERIOR usa performIncrementalSync()
+  - performIncrementalSync() SEMPRE falha por causa do 400
+  - Logo: Google → App NUNCA funciona depois do sync inicial
+
+CORREÇÃO:
+  - Quando tiver syncToken: NÃO setar singleEvents
+  - Quando NÃO tiver syncToken (fallback): setar singleEvents=true
+  - Tratar erro 400 além do 410 (limpar syncToken e refazer)
+  - Lidar com eventos recorrentes (master events) que vêm sem singleEvents
+
+════════════════════════════════════════════════════════════════
+BUG #2 (CRÍTICO): google-calendar-webhook NÃO EXISTE
+════════════════════════════════════════════════════════════════
+
+ONDE: falta a edge function google-calendar-webhook
+
+PROBLEMA:
+  Em setupGoogleWebhook(), o webhook é registrado apontando para:
+    ${supabaseUrl}/functions/v1/google-calendar-webhook
+
+  Mas essa edge function NÃO EXISTE no Supabase.
+
+  Resultado:
+  - O Google tenta enviar push notifications para essa URL
+  - Recebe 404
+  - Depois de algumas tentativas, o Google desiste
+  - Nenhuma mudança em tempo real é detectada
+
+IMPACTO:
+  - Sem webhook, a única forma de sync é o CRON
+  - Mas o CRON também falha por causa do Bug #1
+  - Resultado: sync Google → App é 100% quebrado
+
+CORREÇÃO:
+  - Criar a edge function google-calendar-webhook
+  - Ela recebe POST do Google, identifica o user, e dispara incremental sync
+  - Arquivo completo fornecido: google-calendar-webhook-fix.ts
+
+════════════════════════════════════════════════════════════════
+BUG #3 (MENOR): CRON não trata erros do invoke corretamente
+════════════════════════════════════════════════════════════════
+
+ONDE: google-calendar-sync-cron/index.ts
+
+PROBLEMA:
+  O supabase.functions.invoke() pode retornar um erro de rede/timeout
+  mas o código só checa syncError. Se o invoke falhar com exceção não-capturada,
+  o cron para silenciosamente.
+
+  Além disso, o cron pula users sincronizados há menos de 10 min,
+  mas como a sync nunca funciona (Bug #1), o last_sync_at fica estagnado
+  e o cron tenta toda vez — mas falha toda vez.
+
+CORREÇÃO:
+  - Melhorar tratamento de erro no cron
+  - Já corrigido implicitamente ao resolver Bug #1
+
+════════════════════════════════════════════════════════════════
+BUG #4 (MÉDIO): Eventos recorrentes não são tratados
+════════════════════════════════════════════════════════════════
+
+ONDE: processEventChange() em google-calendar/index.ts
+
+PROBLEMA:
+  Quando syncToken é usado sem singleEvents=true, eventos recorrentes
+  vêm como "master events" (com campo recurrence[] e sem dateTime específico).
+
+  O código atual faz:
+    if (!gEvent.start?.dateTime || !gEvent.end?.dateTime) return;
+
+  Isso pula master events (que têm start.date ao invés de start.dateTime).
+  Mas também pula instâncias individuais de recorrência que só têm date.
+
+CORREÇÃO:
+  - Ao receber um master event recorrente, buscar as instâncias expandidas
+  - Ou: após sync com syncToken, fazer uma segunda query com singleEvents=true
+    para o período relevante, para pegar as instâncias corretas
+  - Solução implementada: fallback para full sync quando detecta recurring events
+
+════════════════════════════════════════════════════════════════
+RESUMO DAS CORREÇÕES NECESSÁRIAS
+════════════════════════════════════════════════════════════════
+
+1. CORRIGIR performIncrementalSync():
+   - Não usar singleEvents=true com syncToken
+   - Tratar erro 400 (limpar syncToken, refazer)
+   - Lidar com eventos recorrentes
+
+2. CRIAR google-calendar-webhook edge function:
+   - Receber POST do Google
+   - Identificar user pelo channel_id
+   - Disparar incremental sync
+
+3. ATIVAR CRON no Supabase:
+   - Verificar se pg_cron está chamando google-calendar-sync-cron
+   - Intervalo sugerido: a cada 15 minutos
+
+ARQUIVOS DE CORREÇÃO:
+  - google-calendar-fix.ts → substituir o código do google-calendar (apenas as funções corrigidas)
+  - google-calendar-webhook-fix.ts → edge function nova completa
