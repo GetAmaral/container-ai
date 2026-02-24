@@ -1,0 +1,30 @@
+════════════════════════════════════════
+FIX: PROMPT DE CRIAÇÃO DE EVENTOS — DATAS DINÂMICAS
+════════════════════════════════════════
+
+PROBLEMA:
+  O prompt_criar1 não recebia a saída do node agendaJs.
+  Resultado: o modelo não tinha referências pré-calculadas suficientes
+  (AMANHA_YMD, CALENDARIO_14D, etc.) e errava datas relativas
+  como "amanhã", "segunda", "sábado", etc.
+
+CAUSA RAIZ:
+  1. Não havia conexão agendaJs → prompt_criar1 no workflow
+  2. O prompt usava apenas $now (expressões n8n), mas faltavam:
+     - AMANHA_YMD, ONTEM_YMD
+     - CALENDARIO_14D (calendário de 14 dias do agendaJs)
+     - DOW_HOJE_PT (dia da semana por extenso)
+     - Timestamps prontos (HOJE_INICIO_TS, AMANHA_INICIO_TS, etc.)
+
+SOLUÇÃO:
+  1. Conectar agendaJs → prompt_criar1 (além de agendaJs → prompt_busca1)
+  2. Adicionar ao prompt de criação:
+     - Todas as referências de data pré-calculadas
+     - Contexto dinâmico do agendaJs (CALENDARIO_14D)
+     - Regras explícitas anti-confusão para "hoje/amanhã/ontem"
+  3. Workflow JSON atualizado com a nova conexão
+
+ARQUIVOS:
+  - fix-prompt-criar-evento-datas-dinamicas.txt (este arquivo)
+  - fix-prompt-criar-evento-workflow.json (workflow corrigido)
+  - prompt-criar-evento-v2-dinamico.txt (prompt corrigido completo)
