@@ -1,0 +1,78 @@
+================================================================
+FIX: Node "Expandir Recorrentes" — Dados saindo vazios
+Flow: busca-total-evento
+================================================================
+
+PROBLEMA
+--------
+O node "Expandir Recorrentes" (Code v2) estava causando perda
+total dos dados. Os eventos (normais e recorrentes) chegavam
+pelo Merge, mas nada saía para o Aggregate8.
+
+CAUSA RAIZ
+----------
+1. SINTAXE INCOMPATÍVEL (principal):
+   O código usava $items('Edit Fields2'), que é sintaxe do
+   Code node v1. O node está na versão 2 (typeVersion: 2),
+   onde $items NÃO EXISTE. Isso lançava um erro silencioso
+   que impedia qualquer retorno de dados.
+
+   ANTES (v1 — ERRADO):
+   const criterio = ($items('Edit Fields2')[0] || {}).json || {};
+
+   DEPOIS (v2 — CORRETO):
+   const criterio = $('Edit Fields2').first().json;
+
+2. ITENS VAZIOS (secundário):
+   Os nodes Supabase com alwaysOutputData: true emitem
+   {json: {}} quando não encontram resultados. Esses objetos
+   vazios passavam pelo filtro e poluíam a lista.
+
+   ANTES:
+   .filter(x => x && typeof x === 'object')
+
+   DEPOIS:
+   .filter(x => x && typeof x === 'object' && x.id)
+
+   Agora só passa quem tem id (evento real).
+
+PASSO A PASSO PARA APLICAR
+---------------------------
+
+1. Abra o n8n e vá ao workflow "busca-total-evento"
+
+2. Clique duas vezes no node "Expandir Recorrentes"
+
+3. Apague TODO o conteúdo do campo "JavaScript Code"
+
+4. Cole o conteúdo completo do arquivo:
+   fix-expandir-recorrentes-v2-code.js
+
+5. Clique em "Save" no node
+
+6. Salve o workflow (Ctrl+S)
+
+7. Teste com os dados pinados do webhook:
+   - Clique em "Test workflow"
+   - Verifique se o Aggregate8 recebe os eventos
+   - Verifique se os eventos normais passam intactos
+   - Verifique se os recorrentes são expandidos na janela
+
+COMO VERIFICAR SE FUNCIONOU
+----------------------------
+- Clique no node "Expandir Recorrentes" após o teste
+- Na aba "Output", deve haver os eventos (não vazio)
+- Eventos normais: aparecem como vieram do Supabase
+- Eventos recorrentes: aparecem expandidos com _is_virtual: true
+- Clique no "Aggregate8": deve ter os mesmos dados agregados
+
+RESUMO DAS ALTERAÇÕES
+----------------------
+| Local                    | Antes (quebrado)                              | Depois (corrigido)                        |
+|--------------------------|-----------------------------------------------|-------------------------------------------|
+| Linha do filtro          | .filter(x => x && typeof x === 'object')      | .filter(x => x && typeof x === 'object' && x.id) |
+| Referência Edit Fields2  | ($items('Edit Fields2')[0] || {}).json || {}   | $('Edit Fields2').first().json            |
+
+Nenhuma outra parte do código foi alterada. Toda a lógica de
+expansão de recorrentes (RRULE parser, timezone, exdates, etc.)
+permanece idêntica.
