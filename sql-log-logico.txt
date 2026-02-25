@@ -1,0 +1,64 @@
+-- =============================================================
+-- TABELA: log_logico
+-- Banco: DB1 (hkzgttizcfklxfafkzfl.supabase.co)
+-- Descricao: Registra acoes do sistema vinculadas ao usuario.
+--            Aparece visualmente inline no chat_log como mensagem
+--            do sistema. Tambem consumida por dashboards/stats.
+-- =============================================================
+-- COPIE E COLE ESTE SQL INTEIRO NO SQL EDITOR DO SUPABASE DB1
+-- =============================================================
+
+CREATE TABLE public.log_logico (
+    id              UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    user_id         UUID NOT NULL,
+    acao            TEXT NOT NULL,
+    mensagem        TEXT NOT NULL,
+    created_at      TIMESTAMPTZ DEFAULT now() NOT NULL
+);
+
+-- Indices para performance
+CREATE INDEX idx_log_logico_user_id ON public.log_logico (user_id);
+CREATE INDEX idx_log_logico_created_at ON public.log_logico (created_at DESC);
+CREATE INDEX idx_log_logico_acao ON public.log_logico (acao);
+CREATE INDEX idx_log_logico_user_time ON public.log_logico (user_id, created_at DESC);
+
+-- RLS (Row Level Security)
+ALTER TABLE public.log_logico ENABLE ROW LEVEL SECURITY;
+
+-- Politica: usuarios autenticados do painel podem ler todos os logs
+CREATE POLICY "Authenticated users can read log_logico"
+    ON public.log_logico
+    FOR SELECT
+    TO authenticated
+    USING (true);
+
+-- Politica: insercao via service_role (n8n, backend)
+CREATE POLICY "Service role can insert log_logico"
+    ON public.log_logico
+    FOR INSERT
+    TO service_role
+    WITH CHECK (true);
+
+-- Politica: insercao via anon (para o site/painel poder inserir)
+CREATE POLICY "Anon can insert log_logico"
+    ON public.log_logico
+    FOR INSERT
+    TO anon
+    WITH CHECK (true);
+
+-- Politica: anon pode ler (necessario para o painel funcionar com anon key)
+CREATE POLICY "Anon can read log_logico"
+    ON public.log_logico
+    FOR SELECT
+    TO anon
+    USING (true);
+
+-- =============================================================
+-- DADOS DE TESTE (opcional - remova depois)
+-- Substitua o UUID pelo user_id real de um usuario do seu sistema
+-- =============================================================
+
+-- INSERT INTO public.log_logico (user_id, acao, mensagem) VALUES
+-- ('seu-uuid-aqui', 'evento_criado', 'Evento "Reuniao com Luan" criado para 26/02 as 16h'),
+-- ('seu-uuid-aqui', 'lembrete_criado', 'Lembrete "Tomar Remedio" criado para 26/02 as 09h'),
+-- ('seu-uuid-aqui', 'plano_ativado', 'Plano Premium ativado com sucesso');
