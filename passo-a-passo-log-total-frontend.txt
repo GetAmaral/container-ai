@@ -1,0 +1,437 @@
+================================================================
+PASSO A PASSO — FRONTEND (SITE)
+ETAPA 2: Exibir avisos da log_total no chat dos usuarios
+================================================================
+
+Repositorio: luizporto-ai/analise-total
+Arquivos afetados: app.js, style.css
+Data: 2026-02-25
+Autor: @architect (Aria)
+
+PRE-REQUISITO: Tabela log_total criada no Supabase DB1
+               (etapa 1 concluida)
+
+================================================================
+RESUMO DAS MUDANCAS
+================================================================
+
+| # | Arquivo    | O que muda                                    |
+|---|------------|-----------------------------------------------|
+| 1 | style.css  | Adicionar estilo da bolha de aviso do sistema |
+| 2 | app.js     | Adicionar funcao mergeMessagesAndLogs()        |
+| 3 | app.js     | Adicionar componente SystemNotice              |
+| 4 | app.js     | Substituir ChatArea inteiro (nova versao)      |
+
+================================================================
+MUDANCA 1 — style.css (adicionar no final do arquivo)
+================================================================
+
+Abra o arquivo style.css e ADICIONE no final (depois da
+ultima linha, sem apagar nada):
+
+────────────────────────────────────────────────────────────────
+
+/* ============================================================
+   System Notice — Avisos do log_total no chat
+   ============================================================ */
+.message.system-notice {
+    align-self: center;
+    max-width: 75%;
+    padding: 14px 24px;
+    border-radius: 16px;
+    text-align: center;
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin: 16px auto;
+    background: hsla(210, 50%, 50%, 0.08);
+    border: 1.5px solid hsla(210, 50%, 50%, 0.15);
+    color: hsla(210, 50%, 60%, 1);
+    box-shadow: none;
+    position: relative;
+}
+
+.message.system-notice .notice-icon {
+    font-size: 1rem;
+    margin-right: 6px;
+}
+
+.message.system-notice .notice-meta {
+    font-size: 0.7rem;
+    opacity: 0.6;
+    margin-top: 8px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+/* Categorias com cores distintas */
+.message.system-notice.cat-lembrete {
+    background: hsla(270, 60%, 55%, 0.08);
+    border-color: hsla(270, 60%, 55%, 0.2);
+    color: hsla(270, 60%, 55%, 1);
+}
+
+.message.system-notice.cat-pagamento {
+    background: hsla(var(--primary) / 0.08);
+    border-color: hsla(var(--primary) / 0.2);
+    color: hsl(var(--primary));
+}
+
+.message.system-notice.cat-sistema {
+    background: hsla(45, 90%, 50%, 0.08);
+    border-color: hsla(45, 90%, 50%, 0.2);
+    color: hsla(45, 80%, 40%, 1);
+}
+
+.message.system-notice.cat-ia {
+    background: hsla(210, 50%, 50%, 0.08);
+    border-color: hsla(210, 50%, 50%, 0.2);
+    color: hsla(210, 50%, 60%, 1);
+}
+
+.message.system-notice.cat-admin {
+    background: hsla(0, 70%, 55%, 0.08);
+    border-color: hsla(0, 70%, 55%, 0.15);
+    color: hsla(0, 70%, 55%, 1);
+}
+
+.message.system-notice.cat-whatsapp {
+    background: hsla(142, 70%, 45%, 0.08);
+    border-color: hsla(142, 70%, 45%, 0.2);
+    color: hsla(142, 70%, 45%, 1);
+}
+
+/* Dark mode */
+[data-theme='dark'] .message.system-notice {
+    color: hsla(210, 60%, 72%, 1);
+}
+
+[data-theme='dark'] .message.system-notice.cat-lembrete {
+    color: hsla(270, 70%, 75%, 1);
+}
+
+[data-theme='dark'] .message.system-notice.cat-sistema {
+    color: hsla(45, 100%, 70%, 1);
+}
+
+[data-theme='dark'] .message.system-notice.cat-admin {
+    color: hsla(0, 80%, 72%, 1);
+}
+
+/* Mobile */
+@media (max-width: 768px) {
+    .message.system-notice {
+        max-width: 90%;
+        padding: 12px 18px;
+        font-size: 0.8rem;
+    }
+}
+
+────────────────────────────────────────────────────────────────
+
+================================================================
+MUDANCA 2 — app.js (adicionar funcao mergeMessagesAndLogs)
+================================================================
+
+ONDE: Adicionar ANTES da funcao ChatArea.
+     Procure esta linha no app.js (por volta da linha 798):
+
+         function ChatArea({ userId, userName, onBack }) {
+
+     Cole o codigo abaixo ANTES dessa linha:
+
+────────────────────────────────────────────────────────────────
+
+// --- Merge de mensagens + avisos do sistema (timeline unificada) ---
+function mergeMessagesAndLogs(messages, logs) {
+    const merged = [];
+
+    messages.forEach(msg => {
+        merged.push({
+            type: 'message',
+            sortTime: new Date(msg.timestamp).getTime(),
+            data: msg
+        });
+    });
+
+    logs.forEach(log => {
+        merged.push({
+            type: 'notice',
+            sortTime: new Date(log.created_at).getTime(),
+            data: log
+        });
+    });
+
+    merged.sort((a, b) => a.sortTime - b.sortTime);
+    return merged;
+}
+
+────────────────────────────────────────────────────────────────
+
+================================================================
+MUDANCA 3 — app.js (adicionar componente SystemNotice)
+================================================================
+
+ONDE: Logo depois da funcao mergeMessagesAndLogs que voce acabou
+     de colar (e antes do ChatArea).
+
+Cole este codigo:
+
+────────────────────────────────────────────────────────────────
+
+// --- Aviso do sistema (visual centralizado no chat) ---
+function SystemNotice({ log }) {
+    const icons = {
+        lembrete: '\u{1F514}',
+        pagamento: '\u{1F4B3}',
+        sistema: '\u26A0\uFE0F',
+        ia: '\u{1F916}',
+        admin: '\u{1F6E1}\uFE0F',
+        whatsapp: '\u{1F4F1}',
+        geral: '\u{1F4CB}'
+    };
+
+    const icon = icons[log.categoria] || icons.geral;
+    const time = new Date(log.created_at).toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+    const date = new Date(log.created_at).toLocaleDateString('pt-BR');
+    const catClass = 'cat-' + (log.categoria || 'geral');
+
+    return e('div', {
+        className: 'message system-notice ' + catClass
+    },
+        e('div', null,
+            e('span', { className: 'notice-icon' }, icon),
+            log.mensagem
+        ),
+        e('div', { className: 'notice-meta' },
+            log.categoria.toUpperCase() + ' \u00B7 ' + log.acao + ' \u00B7 ' + date + ' ' + time
+        )
+    );
+}
+
+────────────────────────────────────────────────────────────────
+
+================================================================
+MUDANCA 4 — app.js (substituir ChatArea completo)
+================================================================
+
+ONDE: Localize a funcao ChatArea inteira no app.js.
+     Ela comeca em:
+
+         function ChatArea({ userId, userName, onBack }) {
+
+     E termina em (por volta da linha 855):
+
+         }
+
+     Logo antes de:
+
+         function EmptyState() {
+
+INSTRUCAO: APAGUE a funcao ChatArea inteira (da linha
+           "function ChatArea" ate o "}" antes de EmptyState)
+           e COLE esta versao nova no lugar:
+
+────────────────────────────────────────────────────────────────
+
+function ChatArea({ userId, userName, onBack }) {
+    const [messages, setMessages] = useState([]);
+    const [systemLogs, setSystemLogs] = useState([]);
+    const [loading, setLoading] = useState(false);
+    const messagesEndRef = useRef(null);
+
+    const scrollToBottom = (behavior = 'auto') => {
+        messagesEndRef.current?.scrollIntoView({ behavior, block: 'end' });
+    };
+
+    useEffect(() => {
+        if (messages.length > 0 || systemLogs.length > 0) scrollToBottom('auto');
+    }, [messages, systemLogs, userId]);
+
+    useEffect(() => { if (userId) fetchAllData(); }, [userId]);
+
+    async function fetchAllData() {
+        setLoading(true);
+        try {
+            const [msgResult, logResult] = await Promise.all([
+                supabase
+                    .from('log_users_messages')
+                    .select('*')
+                    .eq('user_id', userId)
+                    .order('timestamp', { ascending: true }),
+                supabase
+                    .from('log_total')
+                    .select('*')
+                    .eq('user_id', userId)
+                    .order('created_at', { ascending: true })
+            ]);
+
+            if (msgResult.error) throw msgResult.error;
+            if (logResult.error) throw logResult.error;
+
+            setMessages(msgResult.data || []);
+            setSystemLogs(logResult.data || []);
+        } catch (err) {
+            console.error('Error fetching chat data:', err);
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    const timeline = mergeMessagesAndLogs(messages, systemLogs);
+
+    return e('div', { className: 'chat-area main-content', style: { border: 'none', background: 'transparent' } },
+        e('div', { className: 'chat-header', style: { padding: '20px 32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1.5px solid hsla(var(--foreground) / 0.05)' } },
+            e('div', { style: { display: 'flex', alignItems: 'center', gap: '16px' } },
+                e('button', {
+                    className: 'mobile-back',
+                    onClick: onBack,
+                    style: { background: 'none', border: 'none', cursor: 'pointer', color: 'hsl(var(--foreground))', padding: '8px', marginLeft: '-12px' }
+                }, e(ArrowLeft, { size: 24 })),
+                e('div', { style: { display: 'flex', flexDirection: 'column' } },
+                    e('div', { className: 'font-bold', style: { fontSize: '1.1rem' } }, userName || 'Usuário'),
+                    e('div', { style: { fontSize: '0.75rem', color: 'hsl(var(--primary))', fontWeight: '700' } }, 'SESSÃO ATIVA')
+                )
+            ),
+            e(MessageCircle, { size: 20, style: { opacity: 0.4 } })
+        ),
+        e('div', { className: 'chat-messages' },
+            loading
+                ? e('div', { style: { textAlign: 'center', padding: '20px', opacity: 0.5 } }, 'Buscando histórico...')
+                : timeline.map((item, index) => {
+                    if (item.type === 'notice') {
+                        return e(SystemNotice, {
+                            key: 'notice_' + item.data.id,
+                            log: item.data
+                        });
+                    }
+                    const msg = item.data;
+                    return e('div', {
+                        key: 'msg_' + msg.id,
+                        className: 'message-group',
+                        style: { display: 'flex', flexDirection: 'column', gap: '4px' }
+                    },
+                        e('div', { className: 'message user' },
+                            e('div', null, msg.user_message),
+                            e('div', { className: 'message-time', style: { color: 'rgba(255,255,255,0.7)' } },
+                                new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
+                        ),
+                        e('div', { className: 'message ai glass-effect' },
+                            e('div', null, msg.ai_message),
+                            e('div', { className: 'message-time' },
+                                new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
+                        )
+                    );
+                }),
+            e('div', { ref: messagesEndRef })
+        )
+    );
+}
+
+────────────────────────────────────────────────────────────────
+
+================================================================
+RESUMO VISUAL — COMO VAI FICAR O CHAT
+================================================================
+
+Antes (so mensagens):
+
+    ┌──────────────────────────────────┐
+    │        [msg user]     ← verde    │
+    │        [resp IA]      ← glass    │
+    │                                  │
+    │        [msg user]     ← verde    │
+    │        [resp IA]      ← glass    │
+    └──────────────────────────────────┘
+
+Depois (mensagens + avisos):
+
+    ┌──────────────────────────────────┐
+    │        [msg user]     ← verde    │
+    │        [resp IA]      ← glass    │
+    │                                  │
+    │   🔔 Lembrete: Reuniao 16h       │ ← centralizado
+    │   LEMBRETE · lembrete_disparado  │    roxo claro
+    │   25/02/2026 16:00               │
+    │                                  │
+    │        [msg user]     ← verde    │
+    │        [resp IA]      ← glass    │
+    │                                  │
+    │   💳 Plano Premium ativado       │ ← centralizado
+    │   PAGAMENTO · plano_ativado      │    verde claro
+    │   25/02/2026 14:30               │
+    └──────────────────────────────────┘
+
+================================================================
+CORES POR CATEGORIA
+================================================================
+
+| Categoria | Icone | Cor                       |
+|-----------|-------|---------------------------|
+| lembrete  |  🔔   | Roxo  (270, 60%, 55%)     |
+| pagamento |  💳   | Verde (var --primary)      |
+| sistema   |  ⚠️   | Amarelo (45, 90%, 50%)    |
+| ia        |  🤖   | Azul  (210, 50%, 50%)     |
+| admin     |  🛡️   | Vermelho (0, 70%, 55%)    |
+| whatsapp  |  📱   | Verde WA (142, 70%, 45%)  |
+| geral     |  📋   | Azul padrao               |
+
+================================================================
+CHECKLIST DE VALIDACAO
+================================================================
+
+Depois de aplicar as 4 mudancas, teste assim:
+
+[ ] 1. Abra o painel Analise Total no navegador
+[ ] 2. Faca login
+[ ] 3. Va na aba "Logs"
+[ ] 4. Clique em um usuario que tenha dados de teste na
+        log_total (o user_id que voce usou no Passo 6
+        da Etapa 1)
+[ ] 5. Confirme que:
+        - As mensagens normais (user/IA) continuam aparecendo
+        - Os avisos do sistema aparecem ENTRE as mensagens
+        - Os avisos estao centralizados com visual diferente
+        - A cor muda conforme a categoria
+        - A data/hora aparece no rodape do aviso
+[ ] 6. Teste no dark mode (clicar no icone lua/sol)
+        - Os avisos devem continuar legiveis
+[ ] 7. Teste no mobile (redimensionar janela < 768px)
+        - Os avisos devem ficar com 90% de largura
+
+================================================================
+ORDEM DE APLICACAO (IMPORTANTE)
+================================================================
+
+1. PRIMEIRO: style.css (Mudanca 1)
+2. DEPOIS: app.js — mergeMessagesAndLogs (Mudanca 2)
+3. DEPOIS: app.js — SystemNotice (Mudanca 3)
+4. POR ULTIMO: app.js — ChatArea novo (Mudanca 4)
+
+A ordem importa porque o ChatArea novo depende das funcoes
+mergeMessagesAndLogs e SystemNotice.
+
+================================================================
+SEGURANCA NO FRONTEND
+================================================================
+
+- A query na log_total usa a mesma conexao supabase (DB1)
+  que ja esta autenticada (o admin fez login)
+- A RLS garante que somente authenticated pode ler
+- Se o usuario nao estiver logado, a query retorna vazio
+- Nenhum dado sensivel e exposto (a log_total so tem
+  textos de aviso, nao tem senhas/tokens)
+- O frontend NAO insere na log_total (quem insere e o
+  n8n via service_role ou o painel via authenticated)
+
+================================================================
+FIM — ETAPA 2 COMPLETA
+================================================================
+
+Proxima etapa possivel (quando quiser):
+- Etapa 3: Configurar insercao automatica de logs no n8n
+- Etapa 4: Realtime (avisos aparecem sem refresh)
+- Etapa 5: Dashboard de estatisticas com dados da log_total
