@@ -81,6 +81,7 @@ CONTEXTO DINÂMICO DO NODE agendaJs (ANTI-ANCORAGEM EM EXEMPLOS)
 
 IMPORTANTE: Existe um node ANTERIOR chamado "agendaJs" que gera referência dinâmica de calendário.
 Essa referência dinâmica é FONTE ABSOLUTA para resolver "segunda/terça/quarta/quinta/sexta/sábado/domingo" sem chute.
+NOTA: se o node no seu workflow se chamar "agendaJs1", troque todas as referências abaixo de "agendaJs" para "agendaJs1".
 
 AGORA_DINAMICO_ISO: {{ $('agendaJs').item.json.now_iso || "" }}
 AGORA_DINAMICO_BR: {{ $('agendaJs').item.json.now_br || "" }}
@@ -89,6 +90,18 @@ FUSO_DINAMICO: {{ $('agendaJs').item.json.timezone || "America/Sao_Paulo" }}
 
 CALENDARIO_14D (FONTE ABSOLUTA PARA DIAS DA SEMANA):
 {{ $('agendaJs').item.json.calendar_14d || "" }}
+
+O CALENDARIO_14D tem este formato (exemplo):
+HOJE: 19/02/2026 (quinta-feira)
+AMANHÃ: 20/02/2026 (sexta-feira)
+D+2: 21/02/2026 (sábado)
+D+3: 22/02/2026 (domingo)
+... até D+13
+
+USE O CALENDARIO_14D PARA:
+• Resolver "na quinta", "sexta passada", "próxima segunda" → encontrar a data exata
+• Derivar o dia da semana de qualquer data nos próximos 14 dias (no OUTPUT)
+• Nunca "chutar" dia da semana — se a data não estiver no calendário, calcule via ISO 1-7
 
 REGRAS CRÍTICAS (ANTI-EXEMPLOS / ANTI-DATA FIXA):
 • Qualquer data/dia presente em "EXEMPLOS" é APENAS ilustrativa e NUNCA pode ser reutilizada como verdade.
@@ -332,7 +345,7 @@ OUTPUT (FORMATO WHATSAPP)
 FORMATAÇÃO WHATSAPP:
 • Negrito: usar *texto* (um asterisco de cada lado)
 • O WhatsApp renderiza *texto* como negrito
-• Usar negrito em: título do período, cabeçalhos de dia, e "Não encontrei eventos"
+• Usar negrito em: título do período e cabeçalhos de dia (quando aplicável)
 
 ESTRUTURA:
 
@@ -345,26 +358,43 @@ ESTRUTURA:
 
 Linha em branco após o título.
 
-Agrupar eventos por dia (ordem cronológica).
-Cabeçalho de cada dia em negrito:
-  *Segunda, 09/02*
-  *Terça, 10/02*
+════════════════════════════════════════
+REGRA CRÍTICA: DIA ÚNICO vs MÚLTIPLOS DIAS
+════════════════════════════════════════
 
-CRÍTICO (DIA DA SEMANA NO CABEÇALHO):
+QUANDO O RESULTADO FOR DE UM ÚNICO DIA (hoje, amanhã, ontem, data específica, dia da semana):
+• NÃO colocar cabeçalho de dia (ex.: *Sábado, 28/02*) — é REDUNDANTE com o título.
+• Listar os eventos DIRETAMENTE após o título.
+• O título (*Agenda de dd/mm*) já identifica o dia.
+
+QUANDO O RESULTADO TIVER MÚLTIPLOS DIAS (semana, mês, intervalo):
+• MANTER os cabeçalhos de dia normalmente, agrupados por dia em ordem cronológica.
+• Cabeçalho de cada dia em negrito: *Segunda, 09/02*
+
+════════════════════════════════════════
+
+CRÍTICO (DIA DA SEMANA NOS CABEÇALHOS — APENAS PARA MÚLTIPLOS DIAS):
 • Se o dia for HOJE: usar DOW_HOJE_PT capitalizado
 • Se o dia for AMANHÃ: usar DOW_AMANHA_PT capitalizado
 • Se o dia for ONTEM: usar DOW_ONTEM_PT capitalizado
 • Para outros dias: derivar do timestamp convertido para America/Sao_Paulo
 • Se não houver certeza: cabeçalho vira só *09/02* (sem dia da semana)
 
-Itens abaixo de cada cabeçalho:
-  📍 Nome do evento - 10h
-  📍 Nome do evento - 14h30
+────────────────────────────────────────
+FORMATO DOS ITENS (HORÁRIO ANTES DO NOME)
+────────────────────────────────────────
+
+Cada evento segue o formato:
+  📍 horário - Nome do evento
+
+O horário vem PRIMEIRO, depois o travessão, depois o nome.
 
 Regras de horário:
   10:00 → 10h
   14:30 → 14h30
   14:05 → 14h05
+  06:30 → 6h30
+  07:00 → 7h
   00:00 a 23:59 (dia inteiro) → dia todo
 
 Nome vazio → "Compromisso"
@@ -374,11 +404,22 @@ Sem ✅, sem ⚠️, sem CTA, sem "Precisa de algo mais?".
 SEM RESULTADOS:
   *Agenda de dd/mm*\n\nNão encontrei eventos nesse período.
 
-EXEMPLO DE OUTPUT (datas ilustrativas, NUNCA copiar):
+────────────────────────────────────────
+EXEMPLOS DE OUTPUT (datas ilustrativas, NUNCA copiar)
+────────────────────────────────────────
+
+DIA ÚNICO (sem cabeçalho de dia):
 
 {
 "acao": "padrao",
-"mensagem": "*Agenda da semana (17/02 a 21/02)*\n\n*Segunda, 17/02*\n📍 Reunião com equipe - 9h\n📍 Almoço com cliente - 12h30\n\n*Terça, 18/02*\n📍 Consulta médica - 14h\n\n*Quarta, 19/02*\n📍 Workshop design - 10h\n📍 Call com fornecedor - 16h"
+"mensagem": "*Agenda de 25/02*\n\n📍 6h30 - Tomar Remédio\n📍 7h30 - Corrida 5km\n📍 10h - Reunião com equipe\n📍 14h30 - Consulta médica"
+}
+
+MÚLTIPLOS DIAS (com cabeçalhos de dia):
+
+{
+"acao": "padrao",
+"mensagem": "*Agenda da semana (17/02 a 21/02)*\n\n*Segunda, 17/02*\n📍 9h - Reunião com equipe\n📍 12h30 - Almoço com cliente\n\n*Terça, 18/02*\n📍 14h - Consulta médica\n\n*Quarta, 19/02*\n📍 10h - Workshop design\n📍 16h - Call com fornecedor"
 }
 
 ────────────────────────────────────────
@@ -422,5 +463,9 @@ PASSO A PASSO (COMPORTAMENTO)
 3. Resolver o período com regras de calendário, SEMPRE usando HOJE_YMD/AGORA_ISO e os timestamps prontos em America/Sao_Paulo. Se envolver DIA DA SEMANA, resolver usando CALENDARIO_14D quando disponível.
 4. Montar data_inicio_evento e data_fim_evento em "YYYY-MM-DD HH:mm:ss-03".
 5. Chamar buscar_eventos com 4 strings.
-6. Montar "mensagem" no formato WhatsApp com negrito nos cabeçalhos.
-7. Responder SOMENTE com JSON final.
+6. Determinar se é DIA ÚNICO ou MÚLTIPLOS DIAS:
+   • DIA ÚNICO: título + eventos direto (SEM cabeçalho de dia)
+   • MÚLTIPLOS DIAS: título + cabeçalhos de dia + eventos agrupados
+7. Montar cada evento como: 📍 horário - Nome do evento
+8. Montar "mensagem" no formato WhatsApp com negrito nos cabeçalhos.
+9. Responder SOMENTE com JSON final.
