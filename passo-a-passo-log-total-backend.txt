@@ -1,0 +1,397 @@
+================================================================
+PASSO A PASSO — BACKEND (BANCO DE DADOS)
+TABELA: log_total
+BANCO: DB1 (hkzgttizcfklxfafkzfl.supabase.co)
+================================================================
+
+Repositorio: getamaral/container-ai
+Data: 2026-02-25
+Autor: @architect (Aria)
+
+OBJETIVO:
+  Criar uma tabela de auditoria completa (log_total) no Supabase
+  DB1, para registrar TODAS as acoes do sistema. Esses registros
+  vao aparecer como avisos/notificacoes no chat dos usuarios
+  (tela de Logs do painel Analise Total).
+
+SEGURANCA:
+  - Logs sao IMUTAVEIS (ninguem edita, ninguem deleta)
+  - Somente service_role (n8n/backend) e authenticated (admin
+    logado no painel) podem inserir
+  - Anon key NAO pode inserir (previne injecao de logs falsos)
+  - Anon key NAO pode ler (somente admins autenticados)
+  - Nenhuma role pode fazer UPDATE ou DELETE
+
+================================================================
+PASSO 1 — ABRIR O SQL EDITOR DO SUPABASE DB1
+================================================================
+
+1. Acesse: https://supabase.com/dashboard
+2. Selecione o projeto DB1 (hkzgttizcfklxfafkzfl)
+3. No menu lateral, clique em "SQL Editor"
+4. Clique em "New query"
+
+================================================================
+PASSO 2 — CRIAR A TABELA log_total
+================================================================
+
+Copie e cole este SQL no editor e clique em "Run":
+
+────────────────────────────────────────────────────────────────
+-- ============================================================
+-- TABELA: log_total
+-- Auditoria completa de todas as acoes do sistema
+-- ============================================================
+
+CREATE TABLE public.log_total (
+    id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    acao        TEXT NOT NULL,
+    mensagem    TEXT NOT NULL,
+    categoria   TEXT NOT NULL DEFAULT 'geral',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Comentario na tabela (documentacao interna)
+COMMENT ON TABLE public.log_total IS
+  'Auditoria completa do sistema. Logs sao IMUTAVEIS — sem UPDATE/DELETE.';
+
+COMMENT ON COLUMN public.log_total.user_id IS
+  'Identificador do usuario (mesmo user_id de log_users_messages — formato texto WhatsApp)';
+
+COMMENT ON COLUMN public.log_total.acao IS
+  'Codigo da acao em snake_case. Ex: lembrete_disparado, plano_ativado, login_admin';
+
+COMMENT ON COLUMN public.log_total.mensagem IS
+  'Texto legivel do aviso. Aparece visualmente no chat do usuario como notificacao do sistema.';
+
+COMMENT ON COLUMN public.log_total.categoria IS
+  'Classificacao para filtros. Ex: lembrete, sistema, pagamento, ia, admin, whatsapp';
+
+────────────────────────────────────────────────────────────────
+
+RESULTADO ESPERADO: "Success. No rows returned"
+
+================================================================
+PASSO 3 — CRIAR OS INDICES DE PERFORMANCE
+================================================================
+
+Cole e execute este SQL:
+
+────────────────────────────────────────────────────────────────
+-- ============================================================
+-- INDICES para queries rapidas
+-- ============================================================
+
+-- Busca por usuario (ChatArea filtra por user_id)
+CREATE INDEX idx_log_total_user_id
+    ON public.log_total (user_id);
+
+-- Ordenacao por data (timeline do chat)
+CREATE INDEX idx_log_total_created_at
+    ON public.log_total (created_at DESC);
+
+-- Filtro por categoria (para dashboards futuros)
+CREATE INDEX idx_log_total_categoria
+    ON public.log_total (categoria);
+
+-- Filtro por acao (para estatisticas)
+CREATE INDEX idx_log_total_acao
+    ON public.log_total (acao);
+
+-- Indice composto principal (a query mais usada no frontend)
+-- Busca logs de um usuario especifico ordenados por data
+CREATE INDEX idx_log_total_user_time
+    ON public.log_total (user_id, created_at DESC);
+
+────────────────────────────────────────────────────────────────
+
+RESULTADO ESPERADO: "Success. No rows returned"
+
+================================================================
+PASSO 4 — ATIVAR ROW LEVEL SECURITY (RLS)
+================================================================
+
+IMPORTANTE: Este e o passo mais critico de seguranca.
+Sem RLS, qualquer pessoa com a anon key consegue ler/escrever.
+
+Cole e execute este SQL:
+
+────────────────────────────────────────────────────────────────
+-- ============================================================
+-- SEGURANCA: Row Level Security (RLS)
+-- ============================================================
+-- PRINCIPIO: Logs sao IMUTAVEIS
+--   - Ninguem faz UPDATE
+--   - Ninguem faz DELETE
+--   - Somente service_role e authenticated fazem INSERT
+--   - Somente authenticated faz SELECT
+-- ============================================================
+
+-- 1. Ativa RLS (obrigatorio — sem isso as policies nao funcionam)
+ALTER TABLE public.log_total ENABLE ROW LEVEL SECURITY;
+
+-- 2. SELECT — Somente admins autenticados podem ler logs
+--    (o painel Analise Total faz login antes de acessar)
+CREATE POLICY "Admins autenticados podem ler logs"
+    ON public.log_total
+    FOR SELECT
+    TO authenticated
+    USING (true);
+
+-- 3. INSERT — service_role (n8n, Edge Functions, backend)
+--    Esta e a forma principal de inserir logs
+CREATE POLICY "Service role pode inserir logs"
+    ON public.log_total
+    FOR INSERT
+    TO service_role
+    WITH CHECK (true);
+
+-- 4. INSERT — authenticated (admin logado no painel)
+--    Para quando o proprio painel registra acoes do admin
+--    (ex: "Admin editou usuario X", "Admin fez login")
+CREATE POLICY "Admin autenticado pode inserir logs"
+    ON public.log_total
+    FOR INSERT
+    TO authenticated
+    WITH CHECK (true);
+
+-- ============================================================
+-- O QUE NAO EXISTE (DE PROPOSITO):
+--   - Nenhuma policy para anon (anonimo nao le nem escreve)
+--   - Nenhuma policy de UPDATE (logs nao podem ser editados)
+--   - Nenhuma policy de DELETE (logs nao podem ser apagados)
+-- ============================================================
+
+────────────────────────────────────────────────────────────────
+
+RESULTADO ESPERADO: "Success. No rows returned"
+
+================================================================
+PASSO 5 — VALIDAR A SEGURANCA
+================================================================
+
+Execute estas queries de validacao para confirmar que tudo
+esta configurado corretamente:
+
+────────────────────────────────────────────────────────────────
+-- Verificar se RLS esta ativado
+SELECT
+    schemaname,
+    tablename,
+    rowsecurity
+FROM pg_tables
+WHERE tablename = 'log_total';
+-- ESPERADO: rowsecurity = true
+
+-- Verificar policies criadas
+SELECT
+    policyname,
+    permissive,
+    roles,
+    cmd
+FROM pg_policies
+WHERE tablename = 'log_total';
+-- ESPERADO: 3 policies (SELECT authenticated, INSERT service_role, INSERT authenticated)
+-- CONFIRMAR: Nenhuma policy com "anon" | Nenhuma com cmd = UPDATE | Nenhuma com cmd = DELETE
+
+-- Verificar indices
+SELECT
+    indexname,
+    indexdef
+FROM pg_indexes
+WHERE tablename = 'log_total';
+-- ESPERADO: 5 indices + 1 do PK (total 6)
+
+────────────────────────────────────────────────────────────────
+
+================================================================
+PASSO 6 — INSERIR DADOS DE TESTE
+================================================================
+
+Para testar, voce precisa do user_id real de um usuario que
+ja existe na tabela log_users_messages.
+
+PRIMEIRO, descubra um user_id real:
+
+────────────────────────────────────────────────────────────────
+-- Pegar os 5 usuarios mais recentes do sistema
+SELECT DISTINCT
+    user_id,
+    user_name,
+    user_phone
+FROM log_users_messages
+ORDER BY user_id
+LIMIT 5;
+────────────────────────────────────────────────────────────────
+
+Anote o user_id retornado (ex: "554391936205").
+
+Agora insira os logs de teste substituindo USER_ID_AQUI pelo
+valor real:
+
+────────────────────────────────────────────────────────────────
+INSERT INTO public.log_total (user_id, acao, mensagem, categoria)
+VALUES
+    ('USER_ID_AQUI', 'lembrete_disparado',
+     'Lembrete: Reuniao com Luan hoje as 16h',
+     'lembrete'),
+
+    ('USER_ID_AQUI', 'plano_ativado',
+     'Plano Premium ativado com sucesso ate 25/02/2027',
+     'pagamento'),
+
+    ('USER_ID_AQUI', 'audio_processado',
+     'Audio de 0:45 transcrito com sucesso',
+     'ia'),
+
+    ('USER_ID_AQUI', 'evento_criado',
+     'Evento "Dentista" criado para 28/02 as 14h',
+     'lembrete'),
+
+    ('USER_ID_AQUI', 'sistema_aviso',
+     'Seu limite de mensagens esta em 85% (85/100)',
+     'sistema');
+────────────────────────────────────────────────────────────────
+
+RESULTADO ESPERADO: "Success. 5 rows affected"
+
+================================================================
+PASSO 7 — VALIDAR OS DADOS INSERIDOS
+================================================================
+
+────────────────────────────────────────────────────────────────
+-- Ver todos os logs inseridos
+SELECT * FROM public.log_total ORDER BY created_at DESC;
+
+-- Testar a query que o frontend vai usar
+-- (buscar logs de um usuario especifico, ordenados por data)
+SELECT
+    id,
+    acao,
+    mensagem,
+    categoria,
+    created_at
+FROM public.log_total
+WHERE user_id = 'USER_ID_AQUI'
+ORDER BY created_at ASC;
+────────────────────────────────────────────────────────────────
+
+================================================================
+PASSO 8 — ATIVAR REALTIME (OPCIONAL, RECOMENDADO)
+================================================================
+
+Para que os avisos aparecam em tempo real no chat dos usuarios
+(sem precisar atualizar a pagina), ative o Realtime:
+
+1. No Supabase Dashboard, va em "Database" > "Replication"
+2. Encontre a tabela "log_total"
+3. Ative o toggle de Realtime para ela
+
+OU execute via SQL:
+
+────────────────────────────────────────────────────────────────
+ALTER PUBLICATION supabase_realtime ADD TABLE public.log_total;
+────────────────────────────────────────────────────────────────
+
+================================================================
+RESUMO DE SEGURANCA
+================================================================
+
+| Operacao | anon  | authenticated | service_role |
+|----------|-------|---------------|--------------|
+| SELECT   |  NAO  |     SIM       |     SIM      |
+| INSERT   |  NAO  |     SIM       |     SIM      |
+| UPDATE   |  NAO  |     NAO       |     NAO      |
+| DELETE   |  NAO  |     NAO       |     NAO      |
+
+- Logs sao IMUTAVEIS: uma vez criados, nao podem ser
+  alterados nem removidos por nenhuma role
+- Anonimos nao tem acesso a nada nesta tabela
+- Somente quem fez login no painel (authenticated) ou
+  o backend/n8n (service_role) conseguem interagir
+- service_role bypassa RLS por padrao no Supabase, mas
+  as policies estao declaradas para documentacao
+
+================================================================
+COMO O n8n VAI INSERIR LOGS
+================================================================
+
+No n8n, ao usar um node HTTP Request para inserir na log_total,
+use a SERVICE_ROLE KEY (nao a anon key):
+
+URL:    https://hkzgttizcfklxfafkzfl.supabase.co/rest/v1/log_total
+Method: POST
+Headers:
+    apikey:        SUA_SERVICE_ROLE_KEY_DB1
+    Authorization: Bearer SUA_SERVICE_ROLE_KEY_DB1
+    Content-Type:  application/json
+    Prefer:        return=minimal
+
+Body (exemplo):
+{
+    "user_id": "{{ $json.user_id }}",
+    "acao": "lembrete_disparado",
+    "mensagem": "Lembrete: {{ $json.event_name }} em 30 minutos",
+    "categoria": "lembrete"
+}
+
+IMPORTANTE: Nunca use a anon key para inserir logs no n8n.
+A anon key nao tem permissao de INSERT nesta tabela.
+
+================================================================
+CATEGORIAS SUGERIDAS (padrao para consistencia)
+================================================================
+
+| categoria  | Uso                                        |
+|------------|--------------------------------------------|
+| lembrete   | Lembretes disparados, eventos agenda       |
+| sistema    | Avisos do sistema, limites, manutencao     |
+| pagamento  | Ativacao/expiracao de plano, cobranças     |
+| ia         | Processamento de audio, respostas IA       |
+| admin      | Acoes do admin (criar user, editar perfil) |
+| whatsapp   | Sessoes, conexao, status do bot            |
+
+================================================================
+ACOES SUGERIDAS (padrao snake_case)
+================================================================
+
+| acao                  | categoria | Quando usar                     |
+|-----------------------|-----------|---------------------------------|
+| lembrete_disparado    | lembrete  | Lembrete enviado ao usuario     |
+| lembrete_criado       | lembrete  | Novo lembrete agendado          |
+| evento_criado         | lembrete  | Evento de agenda criado         |
+| evento_editado        | lembrete  | Evento modificado               |
+| evento_cancelado      | lembrete  | Evento removido                 |
+| plano_ativado         | pagamento | Plano premium ativado           |
+| plano_expirado        | pagamento | Plano premium venceu            |
+| pagamento_confirmado  | pagamento | Pagamento recebido              |
+| audio_processado      | ia        | Audio transcrito com sucesso    |
+| audio_erro            | ia        | Falha na transcricao            |
+| ia_resposta_ok        | ia        | IA respondeu normalmente        |
+| ia_resposta_erro      | ia        | IA falhou/timeout               |
+| login_admin           | admin     | Admin fez login no painel       |
+| usuario_criado        | admin     | Admin criou usuario no DB2      |
+| usuario_editado       | admin     | Admin editou perfil/plano       |
+| sessao_iniciada       | whatsapp  | Nova conversa WhatsApp          |
+| bot_reiniciado        | sistema   | Bot foi reiniciado              |
+| limite_atingido       | sistema   | Limite de mensagens atingido    |
+| sistema_aviso         | sistema   | Aviso generico do sistema       |
+
+================================================================
+PROXIMA ETAPA (FRONTEND — SERA FEITA DEPOIS)
+================================================================
+
+Apos confirmar que a tabela esta criada e os dados de teste
+aparecem, a proxima etapa sera modificar o app.js para:
+
+1. Buscar dados de log_total junto com log_users_messages
+2. Mesclar as duas listas por timestamp (created_at)
+3. Renderizar os logs como avisos visuais centralizados
+   (diferente das bolhas de mensagem user/IA)
+
+Isso sera feito em um arquivo separado de instrucoes.
+
+================================================================
+FIM — BACKEND COMPLETO
+================================================================
