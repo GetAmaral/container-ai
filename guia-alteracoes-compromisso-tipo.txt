@@ -8,6 +8,31 @@ RESUMO DA MUDANÇA:
 - O BACKEND decide quando notificar com base no campo compromisso_tipo
 
 ════════════════════════════════════════
+BUGS CORRIGIDOS POR ESTA ATUALIZAÇÃO
+════════════════════════════════════════
+
+BUG 1 — REJEIÇÃO INDEVIDA DE HORÁRIOS PRÓXIMOS
+  Exemplo real: Usuário às 00:53 pede "dia 25 00:55 reunião com luan"
+  Sistema respondia: "O horário 25/02 às 00:55 já passou"
+  Causa: A IA comparava 00:55 com AGORA_ISO (00:53) mas errava a
+         comparação por ser timestamps muito próximos. Sem tolerância.
+  Correção: Adicionada tolerância de 5 minutos na validação de passado.
+  Regra: Só rejeitar se o horário for MAIS DE 5 MIN no passado.
+
+BUG 2 — OUTPUT MOSTRANDO HORÁRIO INTERNO (+30 MIN) AO INVÉS DO REAL
+  Exemplo real: Usuário pede "me lembre hoje 00:55 reunião com luan"
+  Sistema respondia: "Data e hora: 25/02/2026, às 01h25min"
+  Causa: O prompt antigo somava +30 min em data_inicio_evento para
+         lembretes. Os nodes de output (Send message4, HTTP Request
+         template) leem data_inicio_evento direto → mostravam 01:25
+         ao invés de 00:55.
+  Correção: Com o novo prompt v4, data_inicio_evento é SEMPRE o
+  horário exato pedido pelo usuário. O campo compromisso_tipo informa
+  ao backend se deve notificar 30 min antes ou no momento exato.
+  Assim, TODOS os nodes de output mostram o horário correto sem
+  precisar de alteração.
+
+════════════════════════════════════════
 PASSO 1 — ATUALIZAR O PROMPT (node: prompt_criar1)
 ════════════════════════════════════════
 

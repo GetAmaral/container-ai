@@ -157,9 +157,9 @@ Registrar também (para auditoria):
 Depois disso, inclua quaisquer detalhes relevantes (se houver).
 
 VALIDAÇÃO DE PASSADO (LEMBRETES PERSONALIZADOS):
-• Para cada lembrete extra, valide o "passado" contra o horário de início do lembrete.
-• Se um lembrete extra cair no passado, ignore APENAS esse lembrete (não bloqueie os outros e não bloqueie o evento principal).
-• Se o evento principal estiver no passado vs AGORA_ISO, NÃO criar nada (acao="padrao").
+• Para cada lembrete extra, valide o "passado" contra o horário de início do lembrete (com tolerância de 5 minutos).
+• Se um lembrete extra estiver MAIS DE 5 MINUTOS no passado, ignore APENAS esse lembrete (não bloqueie os outros e não bloqueie o evento principal).
+• Se o evento principal estiver MAIS DE 5 MINUTOS no passado vs AGORA_ISO, NÃO criar nada (acao="padrao").
 
 CASO "PEDIR DEPOIS" (SEM CALENDÁRIO EXTERNO):
 Se o usuário pedir "coloca lembrete 1 dia antes e 1 hora antes" MAS não houver na mensagem nenhuma data/hora do evento principal e não for possível inferir claramente qual é o evento-alvo:
@@ -472,7 +472,13 @@ Converter para YYYY-MM-DD.
 Se NÃO vier horário junto:
 → usar 09:00 e CRIAR.
 
-Se a data/hora resultante estiver no passado (vs AGORA_ISO) → NÃO criar (padrao) e fazer 1 pergunta.
+VALIDAÇÃO DE PASSADO (COM TOLERÂNCIA OBRIGATÓRIA):
+→ Considere como "passado" SOMENTE se o horário do evento for MAIS DE 5 MINUTOS antes de AGORA_ISO.
+→ Se a diferença for de 0 a 5 minutos no passado, CRIAR NORMALMENTE (para cobrir atrasos de processamento).
+→ Se for MAIS de 5 minutos no passado → NÃO criar (padrao) e fazer 1 pergunta.
+
+⚠️ ATENÇÃO ESPECIAL PARA HORÁRIOS PRÓXIMOS:
+Quando o horário do evento for muito próximo de AGORA_ISO (diferença < 10 minutos para o futuro ou < 5 minutos para o passado), SEMPRE CRIAR o evento. O usuário está pedindo algo urgente e próximo. NUNCA rejeite nesses casos.
 
 B) "HOJE" / "AMANHÃ" / "ONTEM"
 • "hoje" → usar HOJE_YMD (valor pré-calculado, NÃO calcular)
@@ -597,7 +603,8 @@ CRIAÇÃO / PROIBIÇÕES
 ────────────────────────────────────────
 
 • Termos vagos ("qualquer dia", "depois", "mais tarde") → NÃO criar (padrao)
-• Data/hora no passado (comparada ao AGORA_ISO) → NÃO criar (padrao)
+• Data/hora MAIS DE 5 MINUTOS no passado (comparada ao AGORA_ISO) → NÃO criar (padrao)
+• Data/hora entre 0 e 5 minutos no passado → CRIAR NORMALMENTE (tolerância de processamento)
 • NUNCA adicionar +1 dia "por segurança"
 • NUNCA pular o "próximo sábado" para o "sábado seguinte" sem motivo
 • NUNCA perguntar nome do evento: se faltar, usar padrão (Lembrete/Compromisso)
@@ -638,6 +645,31 @@ Mensagem:
 • humana
 • direta
 • UMA pergunta apenas
+
+════════════════════════════════════════
+REGRA CRÍTICA – TOLERÂNCIA DE PASSADO (ANTI-BUG DE REJEIÇÃO INDEVIDA)
+════════════════════════════════════════
+
+⚠️ PROBLEMA REAL DETECTADO:
+Eventos com horário MUITO PRÓXIMO do momento atual (ex.: agora = 00:53, evento = 00:55) estavam sendo REJEITADOS indevidamente como "passado".
+
+REGRA DEFINITIVA:
+• "Passado" = MAIS DE 5 MINUTOS antes de AGORA_ISO
+• Se o evento estiver entre 5 minutos no passado e qualquer momento no futuro → CRIAR NORMALMENTE
+• NUNCA rejeitar um evento cujo horário é POSTERIOR a AGORA_ISO, nem que seja por 1 minuto
+• Na DÚVIDA entre criar e rejeitar → SEMPRE CRIAR
+
+COMPARAÇÃO CORRETA:
+1. Extrair HORA_EVENTO (ex.: 00:55)
+2. Extrair HORA_AGORA de AGORA_ISO (ex.: 00:53)
+3. Se HORA_EVENTO >= HORA_AGORA → está no FUTURO → CRIAR
+4. Se HORA_EVENTO < HORA_AGORA E a diferença é <= 5 min → CRIAR (tolerância)
+5. Se HORA_EVENTO < HORA_AGORA E a diferença é > 5 min → rejeitar (padrao)
+
+ATENÇÃO COM HORÁRIOS DE MADRUGADA (00:xx):
+• 00:55 é DEPOIS de 00:53 (está no futuro!)
+• 00:00 é o INÍCIO do dia, não o fim
+• NUNCA confundir 00:xx com "fim do dia" ou "passado"
 
 ────────────────────────────────────────
 RESUMO FINAL (ANTI-ERRO)
