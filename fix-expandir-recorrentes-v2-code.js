@@ -1,28 +1,37 @@
 // ============================================================
-// Node: "Expandir Recorrentes" — Code v2 (CORRIGIDO)
+// Node: "Expandir Recorrentes" — Code v2 (CORRIGIDO v2)
 // Flow: busca-total-evento
 // ============================================================
-// CORREÇÕES APLICADAS:
-// 1. $items('Edit Fields2') → $('Edit Fields2').first().json
+// CORREÇÕES:
+// 1. $items('Edit Fields2') → $('Edit Fields2').all()[0].json
 //    ($items é sintaxe Code v1, o node usa v2)
-// 2. Filtro de itens vazios vindos de alwaysOutputData
-//    (.filter agora exige x.id para descartar {json:{}})
+// 2. SEM filtro por x.id — deixa itens vazios {} passarem
+//    (eles vêm do alwaysOutputData e mantêm o workflow vivo)
+// 3. Safety net: se resultado final for vazio, retorna [{json:{}}]
+//    pra nunca travar o workflow
 // ============================================================
 
-// Filtra itens vazios vindos de alwaysOutputData dos nodes Supabase
 const allItems = $input.all()
   .map(i => i.json)
-  .filter(x => x && typeof x === 'object' && x.id);
+  .filter(x => x && typeof x === 'object');
 
-// >>> CORRIGIDO: sintaxe Code v2 (era $items que é v1 e causava erro)
-const criterio = $('Edit Fields2').first().json;
+// Pega critérios — sintaxe Code v2
+let criterio = {};
+try {
+  const items = $('Edit Fields2').all();
+  criterio = (items[0] || {}).json || {};
+} catch (e) {
+  criterio = {};
+}
+
 const startRaw = criterio.start_event || '';
 const endRaw   = criterio.end_event || '';
 
 function parseDate(raw) {
   let s = String(raw).trim();
+  if (!s) return null;
   s = s.replace(' ', 'T');
-  s = s.replace(/([+-]\d{2})$/, '$1:00');     // -03 -> -03:00
+  s = s.replace(/([+-]\d{2})$/, '$1:00');
   const d = new Date(s);
   return isNaN(d.getTime()) ? null : d;
 }
@@ -34,9 +43,10 @@ const isTrue = (v) => v === true || v === 'true' || v === 1 || v === '1';
 const normais = allItems.filter(e => !isTrue(e.is_recurring));
 const recorrentes = allItems.filter(e => isTrue(e.is_recurring) && e.rrule);
 
-// se não tem range, devolve o que tiver sem expandir
+// se não tem range, devolve tudo sem expandir
 if (!rangeStart || !rangeEnd) {
-  return [...normais, ...recorrentes].map(e => ({ json: e }));
+  const result = [...normais, ...recorrentes].map(e => ({ json: e }));
+  return result.length > 0 ? result : [{ json: {} }];
 }
 
 // --- helpers de offset ISO ---
@@ -259,10 +269,13 @@ for (const evt of recorrentes) {
   }
 }
 
-// juntar e ordenar
+// juntar normais + ocorrências expandidas, ordenar
 const all = [...normais, ...virtualOccurrences]
   .filter(e => e && typeof e === 'object');
 
 all.sort((a, b) => new Date(a.start_event || 0) - new Date(b.start_event || 0));
 
-return all.map(e => ({ json: e }));
+const result = all.map(e => ({ json: e }));
+
+// Safety net: nunca retornar vazio (mesmo comportamento de alwaysOutputData)
+return result.length > 0 ? result : [{ json: {} }];

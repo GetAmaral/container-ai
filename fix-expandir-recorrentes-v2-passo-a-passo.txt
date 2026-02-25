@@ -1,44 +1,42 @@
 ================================================================
-FIX: Node "Expandir Recorrentes" — Dados saindo vazios
+FIX v2: Node "Expandir Recorrentes" — Dados saindo vazios
 Flow: busca-total-evento
 ================================================================
 
 PROBLEMA
 --------
-O node "Expandir Recorrentes" (Code v2) estava causando perda
-total dos dados. Os eventos (normais e recorrentes) chegavam
-pelo Merge, mas nada saía para o Aggregate8.
+O node "Expandir Recorrentes" (Code v2) não deixa nenhum
+evento passar. O Aggregate8 recebe zero itens e o workflow
+para com "no output data".
 
-CAUSA RAIZ
-----------
-1. SINTAXE INCOMPATÍVEL (principal):
-   O código usava $items('Edit Fields2'), que é sintaxe do
-   Code node v1. O node está na versão 2 (typeVersion: 2),
-   onde $items NÃO EXISTE. Isso lançava um erro silencioso
-   que impedia qualquer retorno de dados.
+CAUSA RAIZ (3 bugs)
+--------------------
+1. SINTAXE INCOMPATÍVEL:
+   $items('Edit Fields2') é sintaxe Code v1.
+   O node é v2 — $items não existe, causa erro.
 
-   ANTES (v1 — ERRADO):
-   const criterio = ($items('Edit Fields2')[0] || {}).json || {};
+   ANTES:  ($items('Edit Fields2')[0] || {}).json || {}
+   DEPOIS: $('Edit Fields2').all()[0].json   (com try/catch)
 
-   DEPOIS (v2 — CORRETO):
-   const criterio = $('Edit Fields2').first().json;
+2. FILTRO x.id MATAVA ITENS NORMAIS:
+   O fix anterior adicionou .filter(x => x.id) que eliminava
+   os itens {} vindos de alwaysOutputData. Esses itens vazios
+   são os únicos em "normais" quando não há eventos pontuais
+   na janela. Sem eles, normais = [] e se a expansão também
+   não gera nada, output = 0 → workflow para.
 
-2. ITENS VAZIOS (secundário):
-   Os nodes Supabase com alwaysOutputData: true emitem
-   {json: {}} quando não encontram resultados. Esses objetos
-   vazios passavam pelo filtro e poluíam a lista.
+   ANTES (fix errado): .filter(x => x && typeof x === 'object' && x.id)
+   DEPOIS (correto):   .filter(x => x && typeof x === 'object')
 
-   ANTES:
-   .filter(x => x && typeof x === 'object')
+3. SEM SAFETY NET:
+   Se normais é vazio E nenhum recorrente cai na janela,
+   o return dava [] → n8n parava o workflow.
 
-   DEPOIS:
-   .filter(x => x && typeof x === 'object' && x.id)
-
-   Agora só passa quem tem id (evento real).
+   AGORA: se resultado final for [], retorna [{json:{}}]
+   (equivalente a alwaysOutputData no código).
 
 PASSO A PASSO PARA APLICAR
 ---------------------------
-
 1. Abra o n8n e vá ao workflow "busca-total-evento"
 
 2. Clique duas vezes no node "Expandir Recorrentes"
@@ -52,27 +50,40 @@ PASSO A PASSO PARA APLICAR
 
 6. Salve o workflow (Ctrl+S)
 
-7. Teste com os dados pinados do webhook:
-   - Clique em "Test workflow"
-   - Verifique se o Aggregate8 recebe os eventos
-   - Verifique se os eventos normais passam intactos
-   - Verifique se os recorrentes são expandidos na janela
+7. Teste com os dados pinados do webhook
 
 COMO VERIFICAR SE FUNCIONOU
 ----------------------------
 - Clique no node "Expandir Recorrentes" após o teste
-- Na aba "Output", deve haver os eventos (não vazio)
-- Eventos normais: aparecem como vieram do Supabase
-- Eventos recorrentes: aparecem expandidos com _is_virtual: true
-- Clique no "Aggregate8": deve ter os mesmos dados agregados
+- Na aba "Output", deve haver itens (nunca vazio)
+- Eventos normais: passam como vieram do Supabase
+- Eventos recorrentes que caem na janela: aparecem
+  expandidos com _is_virtual: true
+- Eventos recorrentes FORA da janela: não aparecem
+  (isso é correto — se o evento é às 18h e a busca
+  começa às 21:14, ele não está na janela)
+- Se nenhum evento cai na janela, aparece ao menos
+  um item {} para manter o workflow rodando
+- O Aggregate8 deve receber os dados normalmente
 
-RESUMO DAS ALTERAÇÕES
-----------------------
-| Local                    | Antes (quebrado)                              | Depois (corrigido)                        |
-|--------------------------|-----------------------------------------------|-------------------------------------------|
-| Linha do filtro          | .filter(x => x && typeof x === 'object')      | .filter(x => x && typeof x === 'object' && x.id) |
-| Referência Edit Fields2  | ($items('Edit Fields2')[0] || {}).json || {}   | $('Edit Fields2').first().json            |
+NOTA SOBRE OS DADOS PINADOS
+-----------------------------
+Com os dados pinados atuais:
+  - Busca: 21:14 às 23:59 BRT, dia 25/02/2026
+  - Evento recorrente: Salão Do Reino, 18:00-18:15 (quarta)
+  - 25/02/2026 É quarta, mas 18:00 < 21:14 → fora da janela
 
-Nenhuma outra parte do código foi alterada. Toda a lógica de
-expansão de recorrentes (RRULE parser, timezone, exdates, etc.)
-permanece idêntica.
+Isso é comportamento CORRETO. O evento de 18h não aparece
+porque a busca começa às 21:14. Se quiser que ele apareça,
+a busca precisa começar antes das 18h (ex: 00:00).
+
+RESUMO DAS MUDANÇAS vs CÓDIGO ORIGINAL
+-----------------------------------------
+| O que mudou                | Original (quebrado)                  | Corrigido                                    |
+|----------------------------|--------------------------------------|----------------------------------------------|
+| Referência Edit Fields2    | $items('Edit Fields2')[0]            | $('Edit Fields2').all()[0]  (com try/catch)   |
+| Filtro de itens            | .filter(x => x && typeof x==='object')| MANTIDO IGUAL (sem x.id!)                   |
+| Retorno vazio              | return all.map(...)                  | if vazio → [{json:{}}]                       |
+
+Toda a lógica de RRULE, timezone, exdates etc. permanece
+idêntica ao código original.
