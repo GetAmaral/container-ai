@@ -1,0 +1,333 @@
+════════════════════════════════════════════════════════════════
+GUIA PASSO A PASSO — IMPLEMENTAÇÃO DO CAMPO "compromisso_tipo"
+════════════════════════════════════════════════════════════════
+
+RESUMO DA MUDANÇA:
+- ANTES: A IA adicionava +30 min ao horário interno dos lembretes
+- DEPOIS: A IA envia horário EXATO + campo "compromisso_tipo" ("compromisso" ou "lembrete")
+- O BACKEND decide quando notificar com base no campo compromisso_tipo
+
+════════════════════════════════════════
+PASSO 1 — ATUALIZAR O PROMPT (node: prompt_criar1)
+════════════════════════════════════════
+
+Node: "prompt_criar1" (id: 93a336f3-2b15-424e-b773-d42c2648f1ca)
+Tipo: Set (n8n-nodes-base.set)
+
+AÇÃO:
+Substituir o conteúdo INTEIRO do campo "value" do assignment "prompt"
+pelo conteúdo do arquivo: prompt-criar-evento-v4-compromisso-tipo.txt
+
+COMO FAZER NO N8N:
+1. Abrir o node "prompt_criar1"
+2. No campo "prompt" → "value", apagar tudo
+3. Colar o conteúdo completo do arquivo prompt-criar-evento-v4-compromisso-tipo.txt
+4. Salvar
+
+════════════════════════════════════════
+PASSO 2 — BANCO DE DADOS (Supabase)
+════════════════════════════════════════
+
+Adicionar coluna na tabela "calendar":
+
+SQL:
+  ALTER TABLE calendar
+  ADD COLUMN compromisso_tipo TEXT NOT NULL DEFAULT 'compromisso'
+  CHECK (compromisso_tipo IN ('compromisso', 'lembrete'));
+
+EXPLICAÇÃO:
+- Tipo TEXT com constraint CHECK para aceitar apenas 'compromisso' ou 'lembrete'
+- DEFAULT 'compromisso' para que eventos existentes não quebrem
+- Todos os eventos antigos serão tratados como compromisso (notificação 30 min antes)
+
+════════════════════════════════════════
+PASSO 3 — ALTERAR OS NODES HTTP DE CRIAÇÃO DE EVENTO
+════════════════════════════════════════
+
+Existem 5 nodes HTTP que criam eventos. Cada um precisa receber o novo campo.
+
+────────────────────────────────────────
+3.1) Node: "HTTP - Create Calendar Tool"
+     ID: 911ae6e5-f04a-42bc-b4a6-b99387d04f6d
+     Posição: [3312, 1056]
+────────────────────────────────────────
+
+SITUAÇÃO ATUAL - Body Parameters:
+  - nome_evento:           {{ $json.tool.nome_evento }}
+  - descricao_evento:      {{ $json.tool.descricao_evento }}
+  - data_inicio_evento:    {{ $json.tool.data_inicio_evento }}
+  - data_fim_evento:       {{ $json.tool.data_fim_evento }}
+  - id_user:               {{ $('setar_user').item.json.id_user }}
+
+ADICIONAR novo parâmetro:
+  Name:  compromisso_tipo
+  Value: ={{ $json.tool.compromisso_tipo || 'compromisso' }}
+
+NOTA: O fallback "|| 'compromisso'" garante compatibilidade caso o campo venha vazio.
+
+────────────────────────────────────────
+3.2) Node: "HTTP - Create Calendar Tool2"
+     ID: 80975ce1-1b09-46f0-b111-b896217474d8
+     Posição: [5232, 1712]
+────────────────────────────────────────
+
+SITUAÇÃO ATUAL - Body Parameters:
+  - nome_evento:           {{ $('Switch2').item.json.tool.nome_evento }}
+  - descricao_evento:      {{ $('Switch2').item.json.tool.descricao_evento }}
+  - data_inicio_evento:    {{ $('Switch2').item.json.tool.data_inicio_evento }}
+  - data_fim_evento:       {{ $('Switch2').item.json.tool.data_fim_evento }}
+  - id_user:               {{ $('setar_user').item.json.id_user }}
+
+ADICIONAR novo parâmetro:
+  Name:  compromisso_tipo
+  Value: ={{ $('Switch2').item.json.tool.compromisso_tipo || 'compromisso' }}
+
+────────────────────────────────────────
+3.3) Node: "HTTP - Create Calendar Tool4"
+     ID: de3d7cfc-72a4-4f5a-ba0e-b422c1475bab
+     Posição: [4128, 1616]
+────────────────────────────────────────
+
+SITUAÇÃO ATUAL - Body Parameters:
+  - nome_evento:           {{ $json.tool.nome_evento }}
+  - descricao_evento:      {{ $json.tool.descricao_evento }}
+  - data_inicio_evento:    {{ $json.tool.data_inicio_evento }}
+  - data_fim_evento:       {{ $json.tool.data_fim_evento }}
+  - id_user:               {{ $('setar_user').item.json.id_user }}
+
+ADICIONAR novo parâmetro:
+  Name:  compromisso_tipo
+  Value: ={{ $json.tool.compromisso_tipo || 'compromisso' }}
+
+────────────────────────────────────────
+3.4) Node: "HTTP - Create Calendar Tool6"
+     ID: 639c96d5-ce8e-4d11-8c9b-0e35f56d1382
+     Posição: [3648, 2304]
+────────────────────────────────────────
+
+SITUAÇÃO ATUAL - Body Parameters:
+  - nome_evento:           {{ $('Switch2').item.json.tool.nome_evento }}
+  - descricao_evento:      {{ $('Switch2').item.json.tool.descricao_evento }}
+  - data_inicio_evento:    {{ $('Switch2').item.json.tool.data_inicio_evento }}
+  - data_fim_evento:       {{ $('Switch2').item.json.tool.data_fim_evento }}
+  - id_user:               {{ $('setar_user').item.json.id_user }}
+
+ADICIONAR novo parâmetro:
+  Name:  compromisso_tipo
+  Value: ={{ $('Switch2').item.json.tool.compromisso_tipo || 'compromisso' }}
+
+────────────────────────────────────────
+3.5) Node: "HTTP - Create Calendar Tool5" (recorrentes)
+     ID: 3b07cd95-8cae-4368-a369-c24172ac382c
+     Posição: [4640, 2256]
+────────────────────────────────────────
+
+SITUAÇÃO ATUAL - Body Parameters (recorrentes):
+  - nome_evento:  {{ $('Code in JavaScript').item.json.tool.nome_evento }}
+  - rrule:        {{ $('Code in JavaScript').item.json.tool.rrule }}
+  - dtstart:      {{ $('Code in JavaScript').item.json.tool.dtstart }}
+  - timezone:     {{ $('Code in JavaScript').item.json.tool.timezone }}
+  - until:        {{ $('Code in JavaScript').item.json.tool.until }}
+  - exdates:      {{ $('Code in JavaScript').item.json.tool.exdates }}
+  - channel:      {{ $('Code in JavaScript').item.json.tool.channel }}
+  - user_id:      {{ $('setar_user').item.json.id_user }}
+
+ADICIONAR novo parâmetro:
+  Name:  compromisso_tipo
+  Value: ={{ $('Code in JavaScript').item.json.tool.compromisso_tipo || 'compromisso' }}
+
+────────────────────────────────────────
+3.6) Node: "HTTP - Create Calendar Tool3" (recorrentes)
+     ID: 71f82a08-aa00-4596-8bfd-f663ca6e9670
+     Posição: [3824, 1696]
+────────────────────────────────────────
+
+SITUAÇÃO ATUAL - mesma estrutura de recorrentes.
+
+ADICIONAR novo parâmetro:
+  Name:  compromisso_tipo
+  Value: ={{ $('Code in JavaScript').item.json.tool.compromisso_tipo || 'compromisso' }}
+
+════════════════════════════════════════
+PASSO 4 — ATUALIZAR O WEBHOOK DE CRIAÇÃO DE EVENTOS (BACKEND)
+════════════════════════════════════════
+
+Webhook: https://totalassistente.com.br/webhook/5e0f5e77-aea5-4784-8a85-58e8eaf49c30
+
+O workflow que RECEBE esse webhook precisa ser atualizado para:
+
+4.1) RECEBER o campo "compromisso_tipo" do body da requisição
+
+4.2) SALVAR no Supabase — incluir compromisso_tipo na inserção:
+     INSERT INTO calendar (user_id, event_name, description, start_event, end_event, compromisso_tipo)
+     VALUES (..., $body.compromisso_tipo)
+
+4.3) LÓGICA DE NOTIFICAÇÃO — alterar a regra de quando disparar o aviso:
+
+     ANTES (regra atual):
+       → Sempre notificar 30 minutos antes de start_event
+
+     DEPOIS (nova regra):
+       → SE compromisso_tipo = 'compromisso':
+           notificar 30 minutos ANTES de start_event (comportamento atual)
+       → SE compromisso_tipo = 'lembrete':
+           notificar NO MOMENTO EXATO de start_event (0 minutos antes)
+
+     COMO IMPLEMENTAR (depende do seu sistema de notificação):
+
+     Opção A — Se usa CRON/scheduler que verifica eventos:
+       Alterar a query de busca de eventos para notificar:
+
+       ANTES:
+         WHERE start_event <= NOW() + INTERVAL '30 minutes'
+
+       DEPOIS:
+         WHERE (
+           (compromisso_tipo = 'compromisso' AND start_event <= NOW() + INTERVAL '30 minutes')
+           OR
+           (compromisso_tipo = 'lembrete' AND start_event <= NOW())
+         )
+
+     Opção B — Se usa agendamento individual (ex.: setTimeout, Bull queue, etc.):
+       Ao criar o evento, calcular o momento da notificação:
+
+       if (compromisso_tipo === 'compromisso') {
+         notification_time = start_event - 30 minutos
+       } else {
+         notification_time = start_event
+       }
+
+     Opção C — Se usa campo auxiliar no banco:
+       Adicionar coluna "notify_at" e calculá-la na inserção:
+
+       ALTER TABLE calendar ADD COLUMN notify_at TIMESTAMPTZ;
+
+       Na inserção:
+       notify_at = CASE
+         WHEN compromisso_tipo = 'lembrete' THEN start_event
+         ELSE start_event - INTERVAL '30 minutes'
+       END
+
+════════════════════════════════════════
+PASSO 5 — VERIFICAR O NODE "Code in JavaScript" (parser)
+════════════════════════════════════════
+
+Node: "Code in JavaScript" (id: 3ea17d38-bb65-4517-b0c2-cb26a1a11839)
+
+AÇÃO: NÃO PRECISA MUDAR NADA.
+
+O código atual já faz parse genérico do JSON e mescla todas as chaves
+do objeto "tool" automaticamente. O campo "compromisso_tipo" será
+passado adiante sem nenhuma alteração necessária.
+
+Trecho relevante que já funciona:
+  for (const [key, value] of Object.entries(parsed)) {
+    if (!(key in base)) {
+      base[key] = value;
+    }
+  }
+
+O campo compromisso_tipo estará disponível em:
+  $json.tool.compromisso_tipo
+
+════════════════════════════════════════
+PASSO 6 — WEBHOOK DE RECORRENTES (SE APLICÁVEL)
+════════════════════════════════════════
+
+Webhook: https://totalassistente.com.br/webhook/criar-lembrete-recorrente-total
+
+Mesmo princípio: receber e salvar o campo compromisso_tipo.
+Para recorrentes, o tipo mais comum será "lembrete", mas pode ser "compromisso" também.
+
+════════════════════════════════════════
+PASSO 7 — TESTES RECOMENDADOS
+════════════════════════════════════════
+
+Após implementar, testar os seguintes cenários:
+
+7.1) COMPROMISSO SIMPLES:
+  Input: "reunião com Luan amanhã às 16h"
+  Esperado:
+    - compromisso_tipo = "compromisso"
+    - data_inicio_evento = amanhã T16:00:00-03:00 (exato)
+    - Notificação: 15:30 (30 min antes)
+
+7.2) LEMBRETE SIMPLES:
+  Input: "me lembre amanhã às 9h de tomar remédio"
+  Esperado:
+    - compromisso_tipo = "lembrete"
+    - data_inicio_evento = amanhã T09:00:00-03:00 (exato, SEM +30)
+    - Notificação: 09:00 (momento exato)
+
+7.3) LEMBRETE RELATIVO:
+  Input: "me avisa daqui 30 minutos pra tirar a roupa do varal"
+  Esperado:
+    - compromisso_tipo = "lembrete"
+    - data_inicio_evento = agora + 30 min (exato)
+    - Notificação: no momento exato
+
+7.4) LEMBRETES PERSONALIZADOS:
+  Input: "Reunião com o time segunda às 20h, me lembre 1 dia antes e 1 hora antes"
+  Esperado:
+    - 3 eventos no array tool:
+      [0] Reunião com o Time → compromisso_tipo = "compromisso" → 20:00
+      [1] Lembrete: Reunião com o Time → compromisso_tipo = "lembrete" → domingo 20:00
+      [2] Lembrete: Reunião com o Time → compromisso_tipo = "lembrete" → segunda 19:00
+
+7.5) NOME INTELIGENTE (não mudou):
+  Input: "consulta com o Dr. Marcos na clínica São Lucas 14/03 às 10h"
+  Esperado:
+    - nome_evento = "Consulta com o Dr. Marcos" (NÃO "Consulta")
+    - compromisso_tipo = "compromisso"
+
+7.6) EVENTO SEM HORÁRIO:
+  Input: "dentista sábado"
+  Esperado:
+    - compromisso_tipo = "compromisso"
+    - data_inicio_evento = próximo sábado T09:00:00-03:00
+
+════════════════════════════════════════
+RESUMO VISUAL DA MUDANÇA
+════════════════════════════════════════
+
+ANTES:
+  User: "me lembre às 15h de tomar remédio"
+  → IA calcula: 15:00 + 30min = 15:30
+  → JSON: data_inicio = 15:30
+  → Sistema notifica 30min antes de 15:30 = 15:00 ✅
+  → Problema: lógica confusa, propensa a erros
+
+DEPOIS:
+  User: "me lembre às 15h de tomar remédio"
+  → IA envia: data_inicio = 15:00, compromisso_tipo = "lembrete"
+  → Sistema vê "lembrete" → notifica às 15:00 ✅
+  → Solução: limpa, direta, sem compensação
+
+ANTES:
+  User: "reunião amanhã 16h"
+  → JSON: data_inicio = 16:00 (sem compensação, era compromisso)
+  → Sistema notifica 30min antes = 15:30 ✅
+
+DEPOIS:
+  User: "reunião amanhã 16h"
+  → JSON: data_inicio = 16:00, compromisso_tipo = "compromisso"
+  → Sistema vê "compromisso" → notifica 30min antes = 15:30 ✅
+  → Mesmo comportamento, mas agora EXPLÍCITO
+
+════════════════════════════════════════
+CHECKLIST FINAL
+════════════════════════════════════════
+
+[ ] 1. Atualizar prompt no node prompt_criar1
+[ ] 2. Adicionar coluna compromisso_tipo no Supabase
+[ ] 3. Adicionar campo compromisso_tipo em HTTP - Create Calendar Tool (node 911ae6e5)
+[ ] 4. Adicionar campo compromisso_tipo em HTTP - Create Calendar Tool2 (node 80975ce1)
+[ ] 5. Adicionar campo compromisso_tipo em HTTP - Create Calendar Tool4 (node de3d7cfc)
+[ ] 6. Adicionar campo compromisso_tipo em HTTP - Create Calendar Tool6 (node 639c96d5)
+[ ] 7. Adicionar campo compromisso_tipo em HTTP - Create Calendar Tool3 (node 71f82a08)
+[ ] 8. Adicionar campo compromisso_tipo em HTTP - Create Calendar Tool5 (node 3b07cd95)
+[ ] 9. Atualizar webhook de criação para salvar compromisso_tipo no banco
+[ ] 10. Atualizar lógica de notificação para respeitar compromisso_tipo
+[ ] 11. Atualizar webhook de recorrentes (se aplicável)
+[ ] 12. Testar cenários 7.1 a 7.6
+[ ] 13. Verificar que eventos antigos continuam funcionando (default = 'compromisso')
