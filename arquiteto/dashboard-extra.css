@@ -1,0 +1,30 @@
+/* ============================================
+   DASHBOARD - CSS ADICIONAL
+   Adicionar no final do style.css existente
+   ============================================ */
+
+/* Dashboard responsive - charts side by side em desktop, empilhado em mobile */
+@media (max-width: 768px) {
+    .main-content [style*="grid-template-columns: 2fr 1fr"] {
+        grid-template-columns: 1fr !important;
+    }
+}
+
+/* Dashboard scroll area */
+.main-content[style*="overflowY: auto"] {
+    scrollbar-width: thin;
+    scrollbar-color: hsla(var(--foreground) / 0.15) transparent;
+}
+
+.main-content[style*="overflowY: auto"]::-webkit-scrollbar {
+    width: 6px;
+}
+
+.main-content[style*="overflowY: auto"]::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.main-content[style*="overflowY: auto"]::-webkit-scrollbar-thumb {
+    background: hsla(var(--foreground) / 0.15);
+    border-radius: 3px;
+}
