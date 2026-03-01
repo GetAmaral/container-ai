@@ -1,0 +1,254 @@
+================================================================
+  FIX: SYNC LOOP GOOGLE CALENDAR <-> SUPABASE
+  Passo a Passo para Aplicar as Correções
+================================================================
+
+PROBLEMA:
+  Quando eventos chegam do Google → Supabase, o trigger
+  sync_calendar_event_to_google dispara e tenta sincronizar de volta
+  pro Google, criando um loop infinito que causa erros e impede
+  o sync bidirecional de funcionar.
+
+SOLUÇÃO:
+  Flag _syncing_from_google na tabela calendar que diz ao trigger
+  "este evento veio do Google, não sincronize de volta".
+
+================================================================
+  ISOLAMENTO DE SEGURANÇA (NÃO HÁ RISCO DE MISTURA)
+================================================================
+
+  O sistema tem 5 camadas de proteção que IMPEDEM mistura de
+  agendas entre usuários:
+
+  1. RLS (Row Level Security) na tabela calendar
+     → Cada política verifica auth.uid() = user_id
+
+  2. Todas as queries filtram por user_id
+     → INSERT, UPDATE, DELETE e SELECT sempre incluem .eq('user_id', userId)
+
+  3. Validação JWT na Edge Function principal
+     → Se userId do body != userId do token → erro 403
+     → Log: "Security breach attempt: User X tried to act as Y"
+
+  4. Webhook isolado por channel_id
+     → Cada webhook é único: calendar-{userId}-{timestamp}
+     → Lookup verifica webhook_id + resource_id + is_connected
+
+  5. Tokens criptografados por usuário
+     → secure_get_google_tokens recebe p_user_id específico
+
+  As correções abaixo MANTÊM todas essas proteções intactas.
+  A flag _syncing_from_google é per-row e todas as operações
+  continuam filtrando por user_id.
+
+================================================================
+  ARQUIVOS NESTA PASTA
+================================================================
+
+  01-migration-sync-loop-fix.sql
+     → SQL para rodar no Supabase SQL Editor
+     → Adiciona coluna _syncing_from_google
+     → Atualiza a function do trigger com proteção anti-loop
+     → Muda trigger de AFTER para BEFORE
+
+  02-google-calendar-index.ts
+     → Substitui: supabase/functions/google-calendar/index.ts
+     → Mudanças:
+        - processEventChange: seta _syncing_from_google: true no INSERT e UPDATE
+        - performIncrementalSync: adiciona showDeleted: true
+        - handleDeleteEvent: trata 404/410 como sucesso (evento já deletado)
+
+  03-google-calendar-webhook-index.ts
+     → Substitui: supabase/functions/google-calendar-webhook/index.ts
+     → Mudanças:
+        - Dedup de 30 segundos (pula webhook se sincronizou há <30s)
+        - processEventChange: seta _syncing_from_google: true no INSERT e UPDATE
+        - performIncrementalSync: adiciona showDeleted: true
+        - getValidAccessToken: inclui refresh automático de token expirado
+
+  04-google-calendar-sync-cron-index.ts
+     → Substitui: supabase/functions/google-calendar-sync-cron/index.ts
+     → Mudanças:
+        - Batch size reduzido de 10 para 5
+        - Delay de 2 segundos entre batches
+        - Log de skipped users
+
+  05-cron-interval-15min.sql
+     → SQL para rodar no Supabase SQL Editor
+     → Muda intervalo do cron de 30 min para 15 min
+
+================================================================
+  ETAPA 1: RODAR A MIGRATION SQL
+================================================================
+
+  1. Abra o Supabase Dashboard → SQL Editor
+  2. Cole o conteúdo de: 01-migration-sync-loop-fix.sql
+  3. Execute
+  4. Verifique que não houve erros
+
+  O que acontece:
+  - Coluna _syncing_from_google é adicionada (default FALSE)
+  - Function sync_calendar_event_to_google é atualizada
+  - Trigger muda de AFTER para BEFORE
+
+  O que NÃO muda:
+  - Comportamento do app (default FALSE = tudo igual)
+  - Comportamento do N8N (não seta a flag = tudo igual)
+  - RLS policies (não são alteradas)
+
+================================================================
+  ETAPA 2: DEPLOY DA EDGE FUNCTION google-calendar
+================================================================
+
+  1. No seu projeto local, substitua o arquivo:
+     supabase/functions/google-calendar/index.ts
+     pelo conteúdo de: 02-google-calendar-index.ts
+
+  2. Deploy:
+     supabase functions deploy google-calendar
+
+  OU se preferir pelo dashboard:
+  1. Supabase Dashboard → Edge Functions → google-calendar
+  2. Substitua o código pelo conteúdo de 02-google-calendar-index.ts
+  3. Deploy
+
+================================================================
+  ETAPA 3: DEPLOY DA EDGE FUNCTION google-calendar-webhook
+================================================================
+
+  1. No seu projeto local, substitua o arquivo:
+     supabase/functions/google-calendar-webhook/index.ts
+     pelo conteúdo de: 03-google-calendar-webhook-index.ts
+
+  2. Deploy:
+     supabase functions deploy google-calendar-webhook
+
+  OU pelo dashboard, mesmo processo da etapa 2.
+
+================================================================
+  ETAPA 4: DEPLOY DA EDGE FUNCTION google-calendar-sync-cron
+================================================================
+
+  1. No seu projeto local, substitua o arquivo:
+     supabase/functions/google-calendar-sync-cron/index.ts
+     pelo conteúdo de: 04-google-calendar-sync-cron-index.ts
+
+  2. Deploy:
+     supabase functions deploy google-calendar-sync-cron
+
+================================================================
+  ETAPA 5: ATUALIZAR INTERVALO DO CRON
+================================================================
+
+  1. Abra o Supabase Dashboard → SQL Editor
+  2. Cole o conteúdo de: 05-cron-interval-15min.sql
+  3. Execute
+
+  NOTA: Se der erro no unschedule (job não existe com esse nome),
+  ignore e rode apenas o schedule.
+
+================================================================
+  ETAPA 6: VERIFICAÇÃO / TESTES
+================================================================
+
+  TESTE 1 - Google → App (webhook):
+  1. Crie um evento no Google Calendar
+  2. Aguarde ~30 segundos
+  3. Verifique na tabela calendar se apareceu
+  4. Verifique nos logs da Edge Function que NÃO houve chamada
+     de volta (o trigger deve ter parado por _syncing_from_google)
+
+  TESTE 2 - App → Google:
+  1. Crie um evento pelo app/frontend
+  2. Verifique se apareceu no Google Calendar
+  3. _syncing_from_google será FALSE (default) → trigger funciona normal
+
+  TESTE 3 - Anti-loop:
+  1. Após o Teste 1, verifique nos logs da Edge Function
+  2. Deve ter apenas 1 chamada (webhook → sync)
+  3. NÃO deve ter chamada de volta (trigger → Edge Function)
+
+  TESTE 4 - N8N:
+  1. Crie um evento via WhatsApp/N8N
+  2. Verifique que aparece no Google + tabela sem duplicação
+
+  TESTE 5 - Delete:
+  1. Delete um evento no Google Calendar
+  2. Aguarde ~30 segundos (webhook) ou 15 min (cron)
+  3. Verifique que sumiu da tabela calendar
+
+  TESTE 6 - Cron fallback:
+  1. Aguarde 15 minutos
+  2. Verifique logs do cron (Edge Function google-calendar-sync-cron)
+  3. Deve ter processado em batches de 5
+
+================================================================
+  O QUE NÃO MUDA (NENHUMA ALTERAÇÃO)
+================================================================
+
+  - Fluxo OAuth (conectar/desconectar Google Calendar)
+  - performInitialSync (sync inicial ao conectar)
+  - N8N workflows
+  - Token encrypt/decrypt/refresh
+  - Webhook setup/cancel
+  - handleCreateEvent, handleUpdateEvent (App → Google)
+  - RLS policies
+  - Todas as outras tables e functions do sistema
+
+================================================================
+  RESUMO DAS MUDANÇAS POR ARQUIVO
+================================================================
+
+  01-migration (SQL):
+  + ALTER TABLE calendar ADD COLUMN _syncing_from_google BOOLEAN
+  + IF _syncing_from_google THEN RETURN NEW (skip sync)
+  + Trigger: AFTER → BEFORE
+
+  02-google-calendar (Edge Function):
+  ~ processEventChange INSERT: + _syncing_from_google: true
+  ~ processEventChange UPDATE: + _syncing_from_google: true
+  ~ performIncrementalSync: + showDeleted: true
+  ~ handleDeleteEvent: + trata 404/410 como sucesso
+
+  03-google-calendar-webhook (Edge Function):
+  + Dedup 30 segundos
+  ~ processEventChange INSERT: + _syncing_from_google: true
+  ~ processEventChange UPDATE: + _syncing_from_google: true
+  ~ performIncrementalSync: + showDeleted: true
+  + getValidAccessToken com refresh automático
+
+  04-google-calendar-sync-cron (Edge Function):
+  ~ batchSize: 10 → 5
+  + delay 2s entre batches
+  + log de skipped
+
+  05-cron-interval (SQL):
+  ~ intervalo: 30 min → 15 min
+
+================================================================
+  FLUXO FINAL (APÓS TODAS AS CORREÇÕES)
+================================================================
+
+  GOOGLE → SUPABASE (webhook, ~30s):
+    1. User cria/edita/deleta no Google Calendar
+    2. Google POST → google-calendar-webhook
+    3. Webhook identifica user pelo channel_id
+    4. performIncrementalSync busca mudanças via syncToken
+    5. processEventChange insere/atualiza COM _syncing_from_google=TRUE
+    6. Trigger BEFORE dispara → vê flag TRUE → RETURN NEW (sem loop!)
+    7. Evento aparece no app
+
+  GOOGLE → SUPABASE (cron, cada 15 min):
+    Mesmo fluxo, disparado pelo pg_cron
+
+  APP → GOOGLE (trigger SQL):
+    1. User cria evento no app (INSERT na tabela)
+    2. _syncing_from_google = FALSE (default)
+    3. Trigger BEFORE dispara → flag FALSE → continua normalmente
+    4. Chama Edge Function → cria no Google Calendar
+
+  N8N → GOOGLE + SUPABASE:
+    1. N8N cria no Google Calendar + insere na tabela
+    2. session_event_id_google já preenchido → trigger pula (proteção existente)
+
+================================================================
