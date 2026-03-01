@@ -1,0 +1,71 @@
+================================================================================
+  SYNC BIDIRECIONAL GOOGLE CALENDAR — PASSO A PASSO
+================================================================================
+
+OBJETIVO: Corrigir sync Google <-> Supabase
+  - Google -> Supabase: via webhook + incremental sync (sem expandir recorrentes)
+  - Supabase -> Google: via trigger no INSERT da tabela calendar
+  - Sem loop: flag _syncing_from_google previne re-sync
+
+ARQUIVOS MODIFICADOS:
+  1. SQL (rodar no SQL Editor do Supabase)    -> sync-bidirecional-sql.sql
+  2. google-calendar/index.ts                 -> sync-bidirecional-google-calendar.ts
+  3. google-calendar-webhook/index.ts         -> sync-bidirecional-webhook.ts
+  4. google-calendar-sync-cron/index.ts       -> sync-bidirecional-cron.ts
+
+================================================================================
+ORDEM DE EXECUCAO
+================================================================================
+
+PASSO 1 — SQL (Supabase Dashboard > SQL Editor)
+  - Abrir sync-bidirecional-sql.sql
+  - IMPORTANTE: substituir os placeholders no final do arquivo:
+    * YOUR_SUPABASE_URL -> URL do projeto (ex: https://xxx.supabase.co)
+    * YOUR_SERVICE_ROLE_KEY -> service role key do projeto
+  - Rodar o SQL inteiro de uma vez
+  - Verificar que nao teve erro
+
+PASSO 2 — Deploy google-calendar
+  - Substituir o conteudo de supabase/functions/google-calendar/index.ts
+    pelo conteudo de sync-bidirecional-google-calendar.ts
+  - Deploy: supabase functions deploy google-calendar
+
+PASSO 3 — Deploy google-calendar-webhook
+  - Substituir o conteudo de supabase/functions/google-calendar-webhook/index.ts
+    pelo conteudo de sync-bidirecional-webhook.ts
+  - Deploy: supabase functions deploy google-calendar-webhook
+
+PASSO 4 — Deploy google-calendar-sync-cron
+  - Substituir o conteudo de supabase/functions/google-calendar-sync-cron/index.ts
+    pelo conteudo de sync-bidirecional-cron.ts
+  - Deploy: supabase functions deploy google-calendar-sync-cron
+
+================================================================================
+VERIFICACAO
+================================================================================
+
+Apos deploy, testar na seguinte ordem:
+
+[ ] 1. Desconectar Google Calendar (se ja conectado)
+[ ] 2. Reconectar Google Calendar
+[ ] 3. Verificar tabela calendar:
+       - Eventos recorrentes tem is_recurring=true e rrule preenchido
+       - Eventos normais tem is_recurring=false
+       - NENHUM evento expandido (sem IDs com sufixo _YYYYMMDDTHHMMSSZ)
+       - Todos os eventos do Google tem _syncing_from_google=true
+[ ] 4. Criar evento no Google Calendar, esperar ~30s
+       - Verificar que apareceu na tabela calendar via webhook
+[ ] 5. Criar evento no app
+       - Verificar que apareceu no Google Calendar via trigger
+[ ] 6. Verificar logs: sem loop (evento do Google nao gera push-to-google)
+
+================================================================================
+O QUE NAO MUDA
+================================================================================
+- OAuth flow (handleCallback, handleAuth)
+- handleCreateEvent, handleUpdateEvent, handleDeleteEvent
+- setupGoogleWebhook, cancelGoogleWebhook
+- handleDisconnect
+- Token encrypt/decrypt/refresh
+- RLS policies
+- N8N workflows
