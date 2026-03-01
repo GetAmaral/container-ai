@@ -688,7 +688,8 @@ async function performInitialSync(userId: string): Promise<{
           remembered: false,
           timezone: gEvent.start.timeZone || 'America/Sao_Paulo',
           calendar_email_created: gEvent.creator?.email || null,
-          active: true
+          active: true,
+          _syncing_from_google: true,
         });
 
       } catch (err) {
@@ -893,22 +894,22 @@ async function performIncrementalSync(userId: string): Promise<void> {
 
     const syncToken = connection?.sync_token;
 
-    // Construir URL para sincronização incremental
-    const url = new URL('https://www.googleapis.com/calendar/v3/calendars/primary/events');
-    if (syncToken) {
-      url.searchParams.set('syncToken', syncToken);
-    } else {
-      // Primeira vez: buscar últimos 30 dias e próximos 90 dias
-      const timeMin = new Date();
-      timeMin.setDate(timeMin.getDate() - 30);
-      const timeMax = new Date();
-      timeMax.setDate(timeMax.getDate() + 90);
-      url.searchParams.set('timeMin', timeMin.toISOString());
-      url.searchParams.set('timeMax', timeMax.toISOString());
+    // CORRIGIDO: Sem sync token → usar performInitialSync como fallback seguro
+    // ANTES: fallback usava singleEvents: true que expandia eventos recorrentes
+    // em centenas/milhares de instâncias individuais (bug dos eventos em 2030+)
+    if (!syncToken) {
+      console.log('No sync token available, performing initial sync as fallback...');
+      await performInitialSync(userId);
+      return;
     }
+
+    // Sync incremental com syncToken
+    // IMPORTANTE: NÃO usar singleEvents aqui!
+    // singleEvents: true expande eventos recorrentes em instâncias individuais,
+    // o que causava centenas de eventos junk com datas em 2030+
+    const url = new URL('https://www.googleapis.com/calendar/v3/calendars/primary/events');
+    url.searchParams.set('syncToken', syncToken);
     url.searchParams.set('maxResults', '250');
-    url.searchParams.set('singleEvents', 'true');
-    // CORRIGIDO: Capturar eventos deletados no Google
     url.searchParams.set('showDeleted', 'true');
 
     console.log('Fetching changes from Google Calendar...');
@@ -917,14 +918,15 @@ async function performIncrementalSync(userId: string): Promise<void> {
     });
 
     if (!response.ok) {
-      // Se sync token inválido, limpar e tentar novamente
+      // Se sync token inválido/expirado, limpar e fazer sync inicial
       if (response.status === 410) {
-        console.log('Sync token expired, clearing...');
+        console.log('Sync token expired (410), clearing and doing initial sync...');
         await supabase
           .from('google_calendar_connections')
           .update({ sync_token: null })
           .eq('user_id', userId);
-        return performIncrementalSync(userId);
+        await performInitialSync(userId);
+        return;
       }
       throw new Error(`Google API error: ${response.status}`);
     }
