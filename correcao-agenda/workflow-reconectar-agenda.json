@@ -1,0 +1,89 @@
+{
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trigger1",
+      "name": "Trigger Manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://ldbdtakddxznfridsarn.supabase.co/rest/v1/rpc/get_disconnected_gc_users",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "SUA_SERVICE_ROLE_KEY" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "buscar_users",
+      "name": "Buscar Users Desconectados",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [620, 300]
+    },
+    {
+      "parameters": {
+        "options": { "reset": false }
+      },
+      "id": "split1",
+      "name": "Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [840, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v23.0/744582292082931/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  messaging_product: 'whatsapp',\n  to: $json.phone,\n  type: 'template',\n  template: {\n    name: 'reconectar_agenda',\n    language: { code: 'pt_BR' }\n  }\n} }}",
+        "options": {}
+      },
+      "id": "enviar_whatsapp",
+      "name": "Enviar WhatsApp Template",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1060, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "TDDrQvr1s0RxXTTC",
+          "name": "WhatsApp Header Auth"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Trigger Manual": {
+      "main": [[ { "node": "Buscar Users Desconectados", "type": "main", "index": 0 } ]]
+    },
+    "Buscar Users Desconectados": {
+      "main": [[ { "node": "Split In Batches", "type": "main", "index": 0 } ]]
+    },
+    "Split In Batches": {
+      "main": [
+        [ { "node": "Enviar WhatsApp Template", "type": "main", "index": 0 } ],
+        []
+      ]
+    },
+    "Enviar WhatsApp Template": {
+      "main": [[ { "node": "Split In Batches", "type": "main", "index": 0 } ]]
+    }
+  }
+}
