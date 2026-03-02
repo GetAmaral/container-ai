@@ -60,23 +60,10 @@ ALTER TABLE calendar ADD COLUMN IF NOT EXISTS rrule text;
 ALTER TABLE calendar ADD COLUMN IF NOT EXISTS next_fire_at timestamptz;
 
 -- ============================================================================
--- 4. CONFIGURACAO: URL e service role key para o trigger
---    IMPORTANTE: substituir os valores abaixo antes de rodar!
--- ============================================================================
-
--- Salvar URL do Supabase como config (usado pelo trigger)
--- SUBSTITUIR 'YOUR_SUPABASE_URL' pela URL real do projeto
-ALTER DATABASE postgres SET app.supabase_url = 'YOUR_SUPABASE_URL';
-
--- Salvar service role key como config (usado pelo trigger)
--- SUBSTITUIR 'YOUR_SERVICE_ROLE_KEY' pela key real
-ALTER DATABASE postgres SET app.service_role_key = 'YOUR_SERVICE_ROLE_KEY';
-
--- Recarregar configs
-SELECT pg_reload_conf();
-
--- ============================================================================
--- 5. TRIGGER FUNCTION: sync calendar -> Google
+-- 4 + 5. TRIGGER FUNCTION: sync calendar -> Google
+--    IMPORTANTE: substituir os 2 valores abaixo antes de rodar!
+--    - YOUR_SUPABASE_URL -> ex: https://abcdefg.supabase.co
+--    - YOUR_SERVICE_ROLE_KEY -> service role key do projeto
 -- ============================================================================
 
 CREATE OR REPLACE FUNCTION trigger_sync_calendar_to_google()
@@ -86,8 +73,9 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-  _supabase_url text;
-  _service_role_key text;
+  -- >>> SUBSTITUIR ESTES 2 VALORES <<<
+  _supabase_url text := 'YOUR_SUPABASE_URL';
+  _service_role_key text := 'YOUR_SERVICE_ROLE_KEY';
 BEGIN
   -- Se veio do Google sync, NAO sincronizar de volta (previne loop)
   IF NEW._syncing_from_google = true THEN
@@ -104,16 +92,6 @@ BEGIN
     SELECT 1 FROM google_calendar_connections
     WHERE user_id = NEW.user_id AND is_connected = true
   ) THEN
-    RETURN NEW;
-  END IF;
-
-  -- Buscar configs
-  _supabase_url := current_setting('app.supabase_url', true);
-  _service_role_key := current_setting('app.service_role_key', true);
-
-  -- Se configs nao existem, nao fazer nada
-  IF _supabase_url IS NULL OR _service_role_key IS NULL THEN
-    RAISE WARNING 'app.supabase_url or app.service_role_key not configured';
     RETURN NEW;
   END IF;
 

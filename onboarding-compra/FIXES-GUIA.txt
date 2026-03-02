@@ -1,0 +1,133 @@
+================================================================
+  GUIA DE FIXES - WORKFLOW N8N MAIN
+  Dex (Dev) - AIOS | 2026-03-02
+================================================================
+
+  OPCAO 1: Importar o arquivo "n8n-main-workflow-corrigido.json"
+           direto no n8n (substitui o workflow atual)
+
+  OPCAO 2: Seguir o passo a passo abaixo no n8n UI
+
+
+================================================================
+ FIX 1 - CRITICO: Switch stg=4 (node "Switch")
+================================================================
+
+  1. Abrir node "Switch"
+  2. Ir na 5a condicao (ultima)
+  3. MUDAR:
+     - Value 1: {{ $json.stg }}
+     - Operator: Number > Equals
+     - Value 2: 4
+  4. Salvar
+
+
+================================================================
+ FIX 2 - CRITICO: trigger-whatsappsdadsa (3 nodes)
+================================================================
+
+  Node "Send message10":
+  1. Abrir node "Send message10"
+  2. No campo "Recipient Phone Number", trocar:
+     DE:  +{{ $('trigger-whatsappsdadsa').item.json.contacts[0].wa_id }}
+     PRA: +{{ $('trigger-whatsapp').item.json.contacts[0].wa_id }}
+  3. Salvar
+
+  Node "Create a row2":
+  1. Abrir node "Create a row2"
+  2. No campo "phone" (fieldValue), trocar:
+     DE:  {{ $('trigger-whatsappsdadsa').item.json.contacts[0].wa_id }}
+     PRA: {{ $('trigger-whatsapp').item.json.contacts[0].wa_id }}
+  3. Salvar
+
+  Node "Premium User1" (desabilitado, mas corrigir mesmo assim):
+  1. Abrir node "Premium User1"
+  2. No campo "messageType" (bodyParameters), trocar:
+     DE:  $('trigger-whatsappsdadsa').item.json.messages[0].type
+     PRA: $('trigger-whatsapp').item.json.messages[0].type
+  3. Salvar
+
+
+================================================================
+ FIX 3 - MEDIO: Switch1 case-insensitive (node "Switch1")
+================================================================
+
+  1. Abrir node "Switch1"
+  2. Na condicao "Sim", mudar Value 1:
+     DE:  {{ $('Edit Fields').item.json.messageSet }}
+     PRA: {{ $('Edit Fields').item.json.messageSet.trim().toLowerCase() }}
+  3. Mudar Value 2:
+     DE:  Sim
+     PRA: sim
+  4. Na condicao "Nao", mudar Value 1:
+     DE:  {{ $('Edit Fields').item.json.messageSet }}
+     PRA: {{ $('Edit Fields').item.json.messageSet.trim().toLowerCase() }}
+  5. Mudar Value 2:
+     DE:  Não
+     PRA: não
+  6. Salvar
+
+
+================================================================
+ FIX 4 - MEDIO: Switch2 case-insensitive (node "Switch2")
+================================================================
+
+  1. Abrir node "Switch2"
+  2. Na condicao "corrigir_email", mudar Value 1:
+     DE:  {{ $('Edit Fields').item.json.messageSet === 'corrigir' || ... }}
+     PRA: {{ $('Edit Fields').item.json.messageSet.trim().toLowerCase() === 'corrigir' }}
+  3. Na condicao "reenviar_code", mudar Value 1:
+     DE:  {{ $('Edit Fields').item.json.messageSet === 'reenviar' || ... }}
+     PRA: {{ $('Edit Fields').item.json.messageSet.trim().toLowerCase() === 'reenviar' }}
+  4. Salvar
+
+
+================================================================
+ FIX 5 - BAIXO: Validacao de email (novo node IF)
+================================================================
+
+  Adicionar ENTRE o Switch (output stg=2) e o template email_confirmacao:
+
+  1. Criar novo node "If" chamado "Email Valido?"
+  2. Condicao:
+     Value 1: {{ /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test($('Edit Fields').item.json.messageSet) }}
+     Operator: Boolean > is true
+  3. Output TRUE: conectar ao "HTTP Request — send agenda template" (flow normal)
+  4. Output FALSE: conectar a um novo node "Send message" que diz:
+     "Isso nao parece um email valido. Por favor, digite seu email corretamente."
+     (NAO muda o stg, user continua em stg=2 e pode tentar de novo)
+
+
+================================================================
+ FIX 6 - BAIXO: Senha hardcoded (node "HTTP Request4")
+================================================================
+
+  1. Abrir node "HTTP Request4"
+  2. No jsonBody, trocar a senha hardcoded por variavel:
+     DE:  "password": "TotalAssistente2025!"
+     PRA: "password": "{{ $env.SUPABASE_DEFAULT_PASSWORD }}"
+  3. Adicionar variavel SUPABASE_DEFAULT_PASSWORD nas Settings do n8n
+  4. Salvar
+
+
+================================================================
+ RESUMO DOS FIXES
+================================================================
+
+  +-------+------------+----------+----------------------------------+
+  | Fix # | Severidade | Tempo    | Descricao                        |
+  +-------+------------+----------+----------------------------------+
+  | 1     | CRITICO    | 2 min    | Switch stg=4 condicao vazia      |
+  | 2     | CRITICO    | 5 min    | trigger-whatsappsdadsa typo      |
+  | 3     | MEDIO      | 5 min    | Switch1 case-insensitive         |
+  | 4     | MEDIO      | 5 min    | Switch2 case-insensitive         |
+  | 5     | BAIXO      | 10 min   | Validacao de formato email       |
+  | 6     | BAIXO      | 5 min    | Senha hardcoded                  |
+  +-------+------------+----------+----------------------------------+
+  | TOTAL |            | ~32 min  |                                  |
+  +-------+------------+----------+----------------------------------+
+
+
+================================================================
+ FIM DO GUIA
+================================================================

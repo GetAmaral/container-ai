@@ -1,0 +1,180 @@
+// ============================================================
+// agendaJs — Busca de Eventos (v2 COMPLETO)
+//
+// Gera TODAS as referencias de data/hora que o prompt precisa.
+// Fuso fixo: America/Sao_Paulo (UTC-03)
+//
+// Cole este codigo no node "agendaJs" que alimenta o prompt de busca.
+// ============================================================
+
+const TZ = 'America/Sao_Paulo';
+
+// ============ HELPERS ============
+
+function pad(n) { return String(n).padStart(2, '0'); }
+
+function brDate(d) {
+  // Retorna "dd/mm/yyyy" no fuso correto
+  const fmt = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: TZ, day: '2-digit', month: '2-digit', year: 'numeric'
+  });
+  return fmt.format(d);
+}
+
+function isoDate(d) {
+  // Retorna "yyyy-mm-dd" no fuso correto
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(d);
+  const y = parts.find(p => p.type === 'year').value;
+  const m = parts.find(p => p.type === 'month').value;
+  const dd = parts.find(p => p.type === 'day').value;
+  return `${y}-${m}-${dd}`;
+}
+
+function isoWeekday(d) {
+  // 1=Segunda ... 7=Domingo (ISO 8601)
+  const dow = new Intl.DateTimeFormat('en-US', {
+    timeZone: TZ, weekday: 'short'
+  }).format(d);
+  const map = { Sun: 7, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  return map[dow] || 0;
+}
+
+function weekdayPt(d) {
+  // "segunda-feira", "terca-feira", etc.
+  return new Intl.DateTimeFormat('pt-BR', {
+    timeZone: TZ, weekday: 'long'
+  }).format(d);
+}
+
+function weekdayPtShort(d) {
+  // "Segunda", "Terca", etc. (sem "-feira", capitalizado)
+  const full = weekdayPt(d);
+  // "segunda-feira" → "Segunda"
+  const base = full.split('-')[0];
+  return base.charAt(0).toUpperCase() + base.slice(1);
+}
+
+function localParts(d) {
+  // Retorna {year, month, day, hour, minute, second} no fuso TZ
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: TZ,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false
+  });
+  const p = {};
+  for (const part of fmt.formatToParts(d)) {
+    p[part.type] = part.value;
+  }
+  return {
+    year: p.year,
+    month: p.month,
+    day: p.day,
+    hour: p.hour === '24' ? '00' : p.hour,
+    minute: p.minute,
+    second: p.second
+  };
+}
+
+function toTimestamp(d) {
+  // "yyyy-mm-dd HH:mm:ss-03"
+  const p = localParts(d);
+  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}-03`;
+}
+
+function toISO(d) {
+  // "yyyy-mm-ddTHH:mm:ss-03:00"
+  const p = localParts(d);
+  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}-03:00`;
+}
+
+// ============ DATAS BASE ============
+
+const now = new Date();
+
+// Criar "hoje 00:00:00" e "hoje 23:59:59" no fuso -03
+const hojeYmd = isoDate(now);
+const hojeInicio = new Date(hojeYmd + 'T00:00:00-03:00');
+const hojeFim    = new Date(hojeYmd + 'T23:59:59-03:00');
+
+const ontemDate = new Date(now.getTime() - 86400000);
+const ontemYmd = isoDate(ontemDate);
+const ontemInicio = new Date(ontemYmd + 'T00:00:00-03:00');
+const ontemFim    = new Date(ontemYmd + 'T23:59:59-03:00');
+
+const amanhaDate = new Date(now.getTime() + 86400000);
+const amanhaYmd = isoDate(amanhaDate);
+const amanhaInicio = new Date(amanhaYmd + 'T00:00:00-03:00');
+const amanhaFim    = new Date(amanhaYmd + 'T23:59:59-03:00');
+
+// ============ CALENDARIO 14 DIAS ============
+
+const weekdays = [
+  'domingo', 'segunda-feira', 'terca-feira', 'quarta-feira',
+  'quinta-feira', 'sexta-feira', 'sabado'
+];
+
+const labels14 = ['HOJE', 'AMANHA'];
+for (let i = 2; i <= 13; i++) labels14.push('D+' + i);
+
+let calendar_14d = '';
+for (let i = 0; i < 14; i++) {
+  const d = new Date(hojeInicio.getTime() + i * 86400000);
+  const ymd = isoDate(d);
+  const br = brDate(d);
+  const wd = weekdayPt(d);
+  calendar_14d += `${labels14[i]}: ${br} (${wd})\n`;
+}
+calendar_14d = calendar_14d.trim();
+
+// ============ ANO ATUAL ============
+
+const lp = localParts(now);
+const anoAtual = lp.year;
+
+// ============ OUTPUT ============
+
+return [{
+  json: {
+    // --- Basicos ---
+    now_iso: toISO(now),
+    now_br: brDate(now),
+    now_weekday: weekdayPt(now),
+    timezone: TZ,
+
+    // --- Datas YMD ---
+    hoje_ymd: hojeYmd,
+    hoje_br: brDate(now),
+    ano_atual: anoAtual,
+    ontem_ymd: ontemYmd,
+    amanha_ymd: amanhaYmd,
+
+    // --- Dia da semana ISO 1-7 ---
+    dow_hoje_iso: isoWeekday(now),
+    dow_ontem_iso: isoWeekday(ontemDate),
+    dow_amanha_iso: isoWeekday(amanhaDate),
+
+    // --- Dia da semana PT (completo) ---
+    dow_hoje_pt: weekdayPt(now),
+    dow_ontem_pt: weekdayPt(ontemDate),
+    dow_amanha_pt: weekdayPt(amanhaDate),
+
+    // --- Dia da semana PT (curto, capitalizado) ---
+    dow_hoje_curto: weekdayPtShort(now),
+    dow_ontem_curto: weekdayPtShort(ontemDate),
+    dow_amanha_curto: weekdayPtShort(amanhaDate),
+
+    // --- Timestamps (para a tool) ---
+    hoje_inicio_ts: toTimestamp(hojeInicio),
+    hoje_fim_ts: toTimestamp(hojeFim),
+    ontem_inicio_ts: toTimestamp(ontemInicio),
+    ontem_fim_ts: toTimestamp(ontemFim),
+    amanha_inicio_ts: toTimestamp(amanhaInicio),
+    amanha_fim_ts: toTimestamp(amanhaFim),
+
+    // --- Calendario 14 dias ---
+    calendar_14d: calendar_14d
+  }
+}];
