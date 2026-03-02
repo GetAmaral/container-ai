@@ -1,0 +1,281 @@
+================================================================
+  DIAGNOSTICO DO WORKFLOW N8N ATUAL (MAIN)
+  Dex (Dev) - AIOS | 2026-03-02
+================================================================
+
+
+================================================================
+ 1. COMO O FLOW FUNCIONA HOJE
+================================================================
+
+  trigger-whatsapp (msg chega)
+    |
+    v
+  Edit Fields (extrai texto: button_reply || button.text || text.body)
+    |
+    v
+  Send message ("Processando...")
+    |
+    v
+  If: msg == "Resuma para mim"?
+    |
+    SIM --> Redis1 --> resumo de audio (GPT) --> envia resumo
+    |
+    NAO --> If3: audio encaminhado?
+              |
+              SIM --> Transcreve audio --> Redis --> envia transcricao
+              |
+              NAO --> Get a row (busca profiles por phone)
+                        |
+                        v
+                      If8: profile existe?
+                        |
+                        SIM --> If9: plan_status == true?
+                        |         |
+                        |         SIM --> setar_user --> If2: premium?
+                        |         |       premium --> Premium User (webhook AI)
+                        |         |       standard --> Standard User2 (webhook AI)
+                        |         |
+                        |         NAO --> Template "plano_inativo"
+                        |
+                        NAO --> Get a row3 (busca phones_whatsapp por wa_id)
+                                  |
+                                  v
+                                Switch (por stg):
+                                  |
+                                  stg nao existe --> Cria registro (stg=1)
+                                  |                   Envia "digite seu email"
+                                  |                   Atualiza stg=2
+                                  |
+                                  stg=1 --> Envia "digite seu email"
+                                  |         Atualiza stg=2
+                                  |
+                                  stg=2 --> Envia template email_confirmacao
+                                  |         (mostra email digitado, pergunta Sim/Nao)
+                                  |         Atualiza stg=3, salva email
+                                  |
+                                  stg=3 --> Switch1:
+                                  |           "Sim" --> stg=4, envia OTP pro email
+                                  |                     OTP ok --> "digite o codigo"
+                                  |                     OTP falha --> cria user, retry OTP
+                                  |           "Nao" --> "digite email correto", stg=2
+                                  |           Outro --> re-pede email (bug?)
+                                  |
+                                  stg=4(?) --> HTTP Request2 (verifica codigo OTP)
+                                                If6: codigo valido?
+                                                  SIM --> Get a row4 (busca profile por email)
+                                                          If7: profile existe?
+                                                            SIM --> Atualiza phone no profile
+                                                                    Envia boas-vindas
+                                                            NAO --> Cria profile (email+phone)
+                                                                    Envia boas-vindas
+                                                  NAO --> Switch2:
+                                                            "corrigir" --> volta stg=2
+                                                            "reenviar" --> reenvia OTP
+                                                            outro --> "codigo incorreto"
+
+
+================================================================
+ 2. BUGS ENCONTRADOS
+================================================================
+
+  BUG 1 - CRITICO: Switch case stg=4 com condicao VAZIA
+  -------------------------------------------------------
+  Localizacao: node "Switch", 5o output (index 4)
+  Problema: A condicao para stg=4 tem leftValue="" e rightValue=""
+            com operador "equals". Isso NUNCA vai matchear stg=4.
+  Impacto: Quando user digita o codigo de verificacao (stg=4),
+           o Switch NAO roteia para HTTP Request2.
+           User fica PRESO no onboarding.
+  Correcao: Mudar a 5a condicao para:
+            leftValue: {{ $json.stg }}
+            rightValue: 4
+            operator: number equals
+
+
+  BUG 2 - CRITICO: Referencia a node inexistente "trigger-whatsappsdadsa"
+  -------------------------------------------------------------------------
+  Localizacao: nodes "Send message10" e "Create a row2"
+  Problema: Referencia $('trigger-whatsappsdadsa') que NAO EXISTE.
+            Deveria ser $('trigger-whatsapp').
+  Impacto: Quando user NAO tem profile e codigo eh validado,
+           o flow QUEBRA ao tentar criar profile e enviar boas-vindas.
+           Erro de referencia no n8n.
+  Correcao: Substituir todas as ocorrencias de
+            'trigger-whatsappsdadsa' por 'trigger-whatsapp'
+
+
+  BUG 3 - MEDIO: stg=1 e "nao existe" fazem a mesma coisa
+  ----------------------------------------------------------
+  Localizacao: Switch outputs 0 e 1
+  Problema: Quando o registro eh criado (output 0), stg=1 eh setado.
+            Mas na MESMA execucao, a msg do user ja foi "consumida"
+            pelo "Processando...".
+            Na PROXIMA msg, stg=1 manda "digite email" DE NOVO.
+            User recebe "digite email" DUAS VEZES.
+  Correcao: Output 0 (criar registro) ja deve setar stg=2
+            (pular o stg=1 redundante) ou unificar os dois paths.
+
+
+  BUG 4 - MEDIO: Switch1 "Sim"/"Nao" case-sensitive
+  ----------------------------------------------------
+  Localizacao: node "Switch1"
+  Problema: Compara exatamente "Sim" e "Nao".
+            Se user digita "sim", "SIM", "s", "yes" --> cai no fallback.
+            Fallback envia... Send message4 (re-pede email) --> BUG!
+            Deveria re-perguntar Sim/Nao, nao pedir email.
+  Correcao: Usar .toLowerCase() na comparacao:
+            {{ $('Edit Fields').item.json.messageSet.toLowerCase() }}
+            E aceitar variantes: "sim", "s", "si", "yes"
+            Fallback deveria ser: "Responda Sim ou Nao"
+
+
+  BUG 5 - MEDIO: Switch2 "corrigir"/"reenviar" parcialmente case-sensitive
+  ---------------------------------------------------------------------------
+  Localizacao: node "Switch2"
+  Problema: Verifica 'corrigir' || 'Corrigir' mas nao 'CORRIGIR'.
+            Mesma coisa com 'reenviar' || 'Reenviar'.
+  Correcao: Usar .toLowerCase() na comparacao.
+
+
+  BUG 6 - BAIXO: Sem validacao de formato de email
+  ---------------------------------------------------
+  Localizacao: stg=2 (user digita email)
+  Problema: Qualquer texto que o user digitar eh salvo como "email".
+            "asdfgh", "oi", "123" --> tudo vira email.
+  Correcao: Adicionar node If antes de salvar:
+            Regex: /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+            Se nao match --> "Isso nao parece um email. Tente novamente."
+
+
+  BUG 7 - BAIXO: Senha hardcoded na criacao de user
+  -----------------------------------------------------
+  Localizacao: node "HTTP Request4"
+  Problema: Cria user com password "TotalAssistente2025!" hardcoded
+            no body do request, visivel no workflow.
+  Correcao: Mover para variavel de ambiente/credential do n8n.
+
+
+  BUG 8 - BAIXO: Create a row2 pode falhar (profiles NOT NULL)
+  ---------------------------------------------------------------
+  Localizacao: node "Create a row2"
+  Problema: Cria profile com apenas email e phone.
+            Mas profiles tem plan_type (NOT NULL) e plan_status (NOT NULL).
+            Se nao tem defaults no banco, INSERT falha.
+  Correcao: Verificar se tem DEFAULT no banco.
+            Se nao, adicionar plan_type e plan_status no insert.
+
+
+================================================================
+ 3. GAPS PARA O FLOW DE COMPRA HOTMART
+================================================================
+
+  O workflow atual NAO tem:
+
+  GAP 1: Nenhum tratamento de webhook Hotmart
+          Nao existe endpoint recebendo PURCHASE_APPROVED
+          --> Precisa de: Story 1.1
+
+  GAP 2: Nenhuma normalizacao de telefone Hotmart
+          checkout_phone_code + checkout_phone nao existe
+          --> Precisa de: Story 1.2
+
+  GAP 3: Nenhum envio proativo de WhatsApp
+          Hoje o bot so RESPONDE msgs, nunca INICIA conversa
+          --> Precisa de: Story 1.3
+
+  GAP 4: Nenhum envio de email
+          Nao tem integracao com provider de email
+          --> Precisa de: Story 1.4
+
+  GAP 5: O onboarding existe mas esta QUEBRADO (bugs 1-6)
+          --> Precisa de: Fix antes de usar (Story 1.5 adaptada)
+
+  GAP 6: Nenhum tratamento de reembolso/chargeback
+          --> Precisa de: Story 1.6
+
+  GAP 7: Nenhuma pagina no Hotmart Club
+          --> Precisa de: Story 1.7
+
+
+================================================================
+ 4. O QUE JA FUNCIONA BEM
+================================================================
+
+  + Sistema de stages (phones_whatsapp.stg) eh uma boa abordagem
+  + Logging de msgs no onboarding (log_users_messages) ja existe
+  + Integracao com Supabase Auth OTP (login sem senha) eh inteligente
+  + Deteccao de profile por phone (Get a row) funciona
+  + Logica de premium vs standard user funciona
+  + Transcricao de audio + resumo via GPT funciona
+  + Template WhatsApp (email_confirmacao, plano_inativo) ja existem
+
+
+================================================================
+ 5. PLANO DE ACAO RECOMENDADO
+================================================================
+
+  FASE 1 - CORRIGIR BUGS DO ONBOARDING ATUAL (rapido)
+  -------------------------------------------------------
+  1. Fix Bug 1: Condicao do Switch stg=4 (5 min)
+  2. Fix Bug 2: trigger-whatsappsdadsa -> trigger-whatsapp (5 min)
+  3. Fix Bug 4: Switch1 case-insensitive + fallback correto (10 min)
+  4. Fix Bug 6: Validacao de email no stg=2 (10 min)
+  5. Fix Bug 3: Unificar stg=1 com "nao existe" (10 min)
+  Total: ~40 min
+
+  FASE 2 - ADICIONAR WEBHOOK HOTMART (Stories 1.1 + 1.2)
+  ---------------------------------------------------------
+  Opcao A: Edge Function no Supabase
+    - Criar edge function "hotmart-webhook"
+    - Valida hottok, salva em webhook_events_log
+    - Cria/atualiza payments + subscriptions + profiles
+    - Normaliza telefone
+
+  Opcao B: Webhook no n8n
+    - Novo workflow n8n dedicado pra Hotmart
+    - Recebe POST, valida, salva no Supabase
+    - Dispara proximo step
+
+  RECOMENDACAO: Opcao A (edge function) para webhook
+  Motivo: Mais confiavel, responde 200 rapido,
+          nao depende do n8n estar online
+
+  FASE 3 - ENVIO PROATIVO DE WHATSAPP (Story 1.3)
+  ---------------------------------------------------
+  - Apos webhook processar, chamar API WhatsApp
+    para enviar msg de boas-vindas
+  - Pode ser via n8n workflow acionado pela edge function
+  - Retry 3x com backoff
+
+  FASE 4 - EMAIL FALLBACK (Story 1.4)
+  --------------------------------------
+  - Integrar com provider de email (Resend recomendado)
+  - Template com link wa.me
+  - Acionado quando phone vazio ou WPP falha 3x
+
+  FASE 5 - HOTMART CLUB (Story 1.7)
+  ------------------------------------
+  - Criar pagina ponte (manual, sem codigo)
+  - Pode fazer em paralelo com qualquer fase
+
+
+================================================================
+ 6. MAPEAMENTO: STAGES ATUAIS vs STAGES DO FLOW NOVO
+================================================================
+
+  ATUAL:                     NOVO (proposta):
+  stg=1 (criado, sem email)  stg=1 (aguardando email)
+  stg=2 (email pedido)       stg=2 (email informado, aguardando confirmacao)
+  stg=3 (email confirmado)   stg=3 (email confirmado, aguardando codigo)
+  stg=4 (codigo enviado)     stg=4 (codigo enviado, aguardando validacao)
+  (nao existe)               stg=5 (ativado - phone vinculado)
+
+  Nota: stg=1 e stg=2 atuais sao redundantes.
+  Sugestao: unificar em stg=1 (aguardando email).
+
+
+================================================================
+ FIM DO DIAGNOSTICO
+ Dex (Dev) - AIOS | 2026-03-02
+================================================================
