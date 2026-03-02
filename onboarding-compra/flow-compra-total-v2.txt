@@ -1,0 +1,411 @@
+================================================================
+         FLOW DE COMPRA & ONBOARDING - TOTAL (v2)
+         Esquematizado por River (SM) - AIOS
+         Data: 2026-03-02
+================================================================
+
+
+================================================================
+ 1. VISAO GERAL
+================================================================
+
+  User compra na Hotmart
+    -> Hotmart envia webhook pro backend
+    -> Backend processa, salva user, normaliza telefone
+    -> Ativa user via WhatsApp (path A) ou Email+WhatsApp (path B)
+
+  Dois pontos de entrada do comprador:
+    - Landing Page (voce controla a experiencia)
+    - Hotmart Marketplace (compra direta, user nao conhece seu fluxo)
+
+
+================================================================
+ 2. EVENTOS HOTMART (WEBHOOK v2.0)
+================================================================
+
+  Eventos que o backend DEVE escutar:
+
+  +--------------------------+-----------------------------------+------------------+
+  | Evento                   | Quando dispara                    | Acao no backend  |
+  +--------------------------+-----------------------------------+------------------+
+  | PURCHASE_APPROVED        | Pagamento confirmado              | Ativar flow      |
+  | PURCHASE_REFUNDED        | Reembolso concedido               | Desativar acesso |
+  | CHARGEBACK               | Contestacao de cartao             | Desativar acesso |
+  +--------------------------+-----------------------------------+------------------+
+
+  Eventos IGNORADOS (nao processamos):
+
+  +--------------------------+-----------------------------------+
+  | AWAITING_PAYMENT         | Boleto gerado, sem confirmacao    |
+  | PURCHASE_DELAYED         | Pagamento pendente                |
+  | PURCHASE_CANCELED        | Compra cancelada                  |
+  | PURCHASE_COMPLETE        | (usamos APPROVED como gatilho)    |
+  | REFUND_REQUEST           | (agimos só no REFUNDED efetivo)   |
+  | SUBSCRIPTION_CANCELLATION| (tratar no futuro se necessario)  |
+  +--------------------------+-----------------------------------+
+
+
+================================================================
+ 3. PAYLOAD DO WEBHOOK HOTMART (dados relevantes)
+================================================================
+
+  {
+    "event": "PURCHASE_APPROVED",
+    "version": "2.0.0",
+    "data": {
+      "buyer": {
+        "email": "user@email.com",
+        "name": "Joao Silva",
+        "first_name": "Joao",
+        "last_name": "Silva",
+        "checkout_phone": "43999999999",
+        "checkout_phone_code": "55",
+        "document": "12345678900",
+        "document_type": "CPF"
+      },
+      "purchase": {
+        "order_id": "HP12345678",
+        "status": "APPROVED"
+      },
+      "product": {
+        "id": 123456,
+        "name": "Nome do Produto"
+      }
+    }
+  }
+
+  IMPORTANTE:
+    - Telefone vem em DOIS campos: checkout_phone_code (DDI) + checkout_phone (numero)
+    - Normalizacao: concatenar DDI + numero = "554399999999" (padrao WhatsApp)
+    - Telefone pode vir VAZIO (Hotmart nao obriga em todos os produtos)
+    - Autenticacao: validar campo "hottok" ou header "x-hotmart-signature"
+
+
+================================================================
+ 4. FLOW PRINCIPAL (DIAGRAMA)
+================================================================
+
+  PONTOS DE ENTRADA DO USER:
+  +------------------+    +---------------------+
+  | Landing Page     |    | Hotmart Marketplace  |
+  | (voce controla)  |    | (compra direta)      |
+  +--------+---------+    +----------+----------+
+           |                         |
+           +-----------+-------------+
+                       |
+                       v
+                HOTMART CHECKOUT
+                       |
+           +-----------+-----------+
+           |           |           |
+           v           v           v
+       APPROVED   REFUND/CB    (outros)
+           |           |        ignorar
+           |     Desativa
+           |     acesso
+           v
+  +------------------------------------+
+  | BACKEND RECEBE WEBHOOK             |
+  |  1. Valida hottok/signature        |
+  |  2. Idempotencia (order_id unico)  |
+  |  3. Salva/atualiza user no banco   |
+  |  4. Normaliza phone (DDI + num)    |
+  +----------------+-------------------+
+                   |
+             Tem telefone?
+             +-----+-----+
+            SIM         NAO
+             |           |
+             v           v
+      +-----------+  +---------------------+
+      | PATH A    |  | PATH B              |
+      | WhatsApp  |  | Email:              |
+      | boas-     |  | "Ative via WPP"     |
+      | vindas    |  | + link wa.me/...    |
+      | (3 retry) |  +----------+----------+
+      | User ja   |             |
+      | ativado!  |      User manda msg WPP
+      +-----+-----+             |
+            |              ONBOARDING WPP
+        Falhou 3x? ------> (ver secao 5)
+                                |
+                          User ativado!
+
+
+================================================================
+ 5. PATH A - COM TELEFONE (HAPPY PATH)
+================================================================
+
+  Webhook APPROVED chega com checkout_phone preenchido
+    |
+    v
+  Normaliza: checkout_phone_code + checkout_phone
+    Ex: "55" + "43999999999" = "554399999999"
+    |
+    v
+  Envia WhatsApp de boas-vindas
+    |
+    +-- OK --> User ATIVADO automaticamente
+    |          (nao precisa de onboarding)
+    |          Mensagem: "Bem-vindo ao Total! Sua conta esta ativa."
+    |
+    +-- ERRO --> Retry (tentativa 2)
+                   |
+                   +-- OK --> User ATIVADO
+                   |
+                   +-- ERRO --> Retry (tentativa 3)
+                                  |
+                                  +-- OK --> User ATIVADO
+                                  |
+                                  +-- FALHOU 3x --> FALLBACK
+                                       |
+                                       v
+                                  Envia EMAIL:
+                                  "Nao conseguimos te contatar via WhatsApp.
+                                   Entre em contato com Total: wa.me/55XXX"
+                                       |
+                                       v
+                                  (segue PATH B - Onboarding WPP)
+
+
+================================================================
+ 6. PATH B - SEM TELEFONE (OU FALLBACK DO PATH A)
+================================================================
+
+  User recebe EMAIL:
+    "Sua compra foi confirmada!
+     Ative sua conta via WhatsApp: wa.me/55XXXXXXXXX"
+    |
+    v
+  User manda mensagem no WhatsApp do Total
+    |
+    v
+  Bot detecta que user NAO tem conta ativa
+    |
+    v
+  ONBOARDING WHATSAPP:
+    |
+    |  PASSO 1: Bot pergunta email
+    |    Bot: "Qual email voce usou na compra?"
+    |    User: "joao@email.com"
+    |      |
+    |      v
+    |  PASSO 2: Busca email no banco
+    |      |
+    |      +-- MATCH ENCONTRADO
+    |      |     |
+    |      |     v
+    |      |   PASSO 3: Envia codigo de verificacao pro email
+    |      |     Codigo: 6 digitos, validade 10 minutos
+    |      |     Bot: "Enviamos um codigo para joao@email.com. Digite aqui."
+    |      |     |
+    |      |     v
+    |      |   PASSO 4: User digita codigo no WhatsApp
+    |      |     |
+    |      |     +-- CODIGO VALIDO
+    |      |     |     |
+    |      |     |     v
+    |      |     |   PASSO 5: Backend vincula numero WPP ao user
+    |      |     |   PASSO 6: Conta ATIVADA!
+    |      |     |     Bot: "Conta ativada com sucesso!"
+    |      |     |
+    |      |     +-- CODIGO INVALIDO/EXPIRADO
+    |      |           Bot: "Codigo invalido. Quer que envie outro?"
+    |      |           (novo codigo, reseta 10 min)
+    |      |
+    |      +-- SEM MATCH (email nao encontrado)
+    |            |
+    |            v
+    |          Tentativa 1: "Email nao encontrado. Tente novamente."
+    |          Tentativa 2: "Email nao encontrado. Tente novamente."
+    |          Tentativa 3: "Email nao encontrado."
+    |            |
+    |            v
+    |          ENCAMINHA PRA ATENDIMENTO HUMANO
+    |          Bot: "Vou te conectar com nossa equipe."
+    |
+    v
+  [FIM DO ONBOARDING]
+
+
+================================================================
+ 7. COMPRA NAO ENCONTRADA (WEBHOOK ATRASADO)
+================================================================
+
+  CENARIO: User manda msg no WPP antes do webhook chegar
+
+  User manda msg --> Bot busca no banco --> Compra nao existe ainda
+    |
+    v
+  Bot: "Ainda nao encontrei sua compra no sistema.
+        Pode levar ate 5 minutos apos o pagamento.
+        Tente novamente em instantes."
+    |
+    v
+  (User tenta de novo apos alguns minutos)
+  (Se webhook ja chegou, segue onboarding normal)
+
+
+================================================================
+ 8. HOTMART CLUB - PAGINA PONTE
+================================================================
+
+  PROBLEMA: User que compra direto pelo Marketplace da Hotmart
+  acessa a area de membros (Hotmart Club) e nao encontra nada.
+
+  SOLUCAO: Criar UMA pagina no Hotmart Club com instrucoes:
+
+  +------------------------------------------------------+
+  |                                                      |
+  |  Bem-vindo ao Total!                                 |
+  |                                                      |
+  |  Sua experiencia acontece no WhatsApp.               |
+  |                                                      |
+  |  Se voce ja recebeu nossa mensagem, basta            |
+  |  responder por la.                                   |
+  |                                                      |
+  |  Se ainda nao recebeu, clique abaixo:                |
+  |  [ATIVAR VIA WHATSAPP] -> wa.me/55XXXXXXXXX          |
+  |                                                      |
+  |  Ou envie um email para: suporte@total.com           |
+  |                                                      |
+  +------------------------------------------------------+
+
+  Isso resolve:
+    - User que compra pelo marketplace e nao sabe do WPP
+    - User que nao recebeu WhatsApp/email
+    - Reducao de reclamacoes tipo "comprei e nao tem nada"
+
+
+================================================================
+ 9. DESATIVACAO (REEMBOLSO / CHARGEBACK)
+================================================================
+
+  Webhook PURCHASE_REFUNDED ou CHARGEBACK chega
+    |
+    v
+  Backend busca user por order_id
+    |
+    +-- User encontrado
+    |     |
+    |     v
+    |   Desativa acesso do user
+    |   Atualiza status no banco: "desativado"
+    |   (opcional: enviar msg WPP informando desativacao)
+    |
+    +-- User NAO encontrado
+          |
+          v
+        Loga warning (webhook de refund sem user correspondente)
+        Ignora
+
+
+================================================================
+ 10. REGRAS DE NEGOCIO E DECISOES
+================================================================
+
+  +-----+------------------------------------------+-------------------+
+  | #   | Regra                                    | Decisao           |
+  +-----+------------------------------------------+-------------------+
+  | R1  | Telefone vazio no webhook                | Envia email       |
+  | R2  | Boleto (AWAITING_PAYMENT)                | Ignora ate APPROVED|
+  | R3  | Reembolso/Chargeback                     | Desativa acesso   |
+  | R4  | Retry WhatsApp                           | Maximo 3 tentativas|
+  | R5  | Fallback apos 3 falhas WPP               | Envia email       |
+  | R6  | Codigo de verificacao                    | 6 digitos, 10 min |
+  | R7  | Email sem match no onboarding            | 3 tentativas, depois humano |
+  | R8  | User com telefone (Path A)               | Ativado auto, sem onboarding |
+  | R9  | Compra duplicada (order_id repetido)      | Ignora (idempotencia) |
+  | R10 | Mesmo WPP, emails diferentes             | Encaminha humano  |
+  | R11 | Webhook antes do user aparecer no WPP    | Normal (async)    |
+  | R12 | User no WPP antes do webhook chegar      | "Aguarde 5 min"   |
+  +-----+------------------------------------------+-------------------+
+
+
+================================================================
+ 11. EDGE CASES MAPEADOS
+================================================================
+
+  CASE 1: Compra duplicada
+    Webhook chega -> order_id ja existe no banco -> IGNORA
+    (idempotencia garante que nao processa 2x)
+
+  CASE 2: Mesmo WhatsApp vinculado a outro email
+    Phone ja vinculado a email diferente -> ENCAMINHA HUMANO
+    (pode ser fraude ou conta compartilhada)
+
+  CASE 3: Webhook com retry da Hotmart
+    Hotmart reenvia webhook ate 5x se nao receber HTTP 200
+    Backend DEVE responder 200 imediatamente, processar async
+
+  CASE 4: User internacional
+    DDI diferente de 55 -> Normaliza igual: DDI + numero
+    Ex: "1" + "2125551234" = "12125551234"
+    WhatsApp funciona com qualquer DDI valido
+
+  CASE 5: Codigo expirado no onboarding
+    User demora mais de 10 min -> Codigo expira
+    Bot oferece reenvio de novo codigo
+
+  CASE 6: User compra pelo marketplace, ignora Hotmart Club
+    Nao recebe WPP (sem telefone) + nao le email
+    -> Unica salvacao: pagina no Hotmart Club com link wa.me
+
+
+================================================================
+ 12. STORIES SUGERIDAS (PARA IMPLEMENTACAO)
+================================================================
+
+  Story 1: Receber e validar webhook da Hotmart
+    - Endpoint POST /webhook/hotmart
+    - Validar hottok/signature
+    - Idempotencia por order_id
+    - Rotear por tipo de evento
+
+  Story 2: Salvar user e normalizar telefone
+    - Criar/atualizar user no banco
+    - Concatenar DDI + phone
+    - Tratar phone vazio
+
+  Story 3: Enviar WhatsApp de boas-vindas (Path A)
+    - Integrar com API do WhatsApp
+    - Logica de retry (3x)
+    - Marcar user como ativado
+    - Fallback pra email apos 3 falhas
+
+  Story 4: Enviar email de ativacao (Path B)
+    - Template de email com link wa.me
+    - Disparo para users sem telefone
+    - Disparo como fallback do Path A
+
+  Story 5: Onboarding via WhatsApp (Path B)
+    - Bot detecta user sem conta ativa
+    - Fluxo: pede email -> busca match -> codigo -> ativacao
+    - 3 tentativas de email sem match -> humano
+    - Codigo 6 digitos, validade 10 min
+
+  Story 6: Tratar reembolso e chargeback
+    - Escutar PURCHASE_REFUNDED e CHARGEBACK
+    - Desativar acesso do user
+    - Logar evento
+
+  Story 7: Pagina ponte no Hotmart Club
+    - Criar pagina unica com instrucoes
+    - Link wa.me para ativacao
+    - Resolver caso de compra direta pelo marketplace
+
+
+================================================================
+ 13. PROXIMOS PASSOS
+================================================================
+
+  1. Revisar este documento
+  2. Definir schema do banco (tabelas, campos, status)
+  3. Criar stories detalhadas com acceptance criteria
+  4. Implementar na ordem: Story 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
+
+
+================================================================
+ FIM DO DOCUMENTO
+ River (SM) - AIOS | 2026-03-02
+================================================================
