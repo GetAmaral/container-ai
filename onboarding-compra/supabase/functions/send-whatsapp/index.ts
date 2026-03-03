@@ -11,7 +11,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 // --- Config ---
 
-const RETRY_DELAYS = [0, 30_000, 120_000]; // imediato, 30s, 2min
+// Sem delays — edge function tem timeout curto. Tenta 3x imediato.
+const MAX_ATTEMPTS = 3;
 const WHATSAPP_API_URL = "https://graph.facebook.com/v23.0";
 
 // --- Helpers ---
@@ -174,14 +175,9 @@ Deno.serve(async (req: Request) => {
     return json({ status: "already_activated" });
   }
 
-  // Retry loop: 3 tentativas com backoff
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    const delay = RETRY_DELAYS[attempt - 1];
-    if (delay > 0) {
-      await new Promise((r) => setTimeout(r, delay));
-    }
-
-    console.log(`[wpp] Attempt ${attempt}/3 | phone: ${phone} | order: ${orderId}`);
+  // 3 tentativas imediatas (sem delay)
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    console.log(`[wpp] Attempt ${attempt}/${MAX_ATTEMPTS} | phone: ${phone} | order: ${orderId}`);
     const result = await sendWhatsAppTemplate(phone, userName);
 
     if (result.ok) {

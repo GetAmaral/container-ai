@@ -40,7 +40,8 @@ interface HotmartPayload {
   };
 }
 
-type WebhookStatus = "received" | "processed" | "ignored" | "error";
+// CHECK constraint: processing_status IN ('success', 'error', 'skipped')
+type WebhookStatus = "success" | "error" | "skipped";
 
 // Eventos que processamos
 const ACTIONABLE_EVENTS = [
@@ -171,7 +172,7 @@ async function alreadyProcessed(
     .select("id")
     .eq("order_id", orderId)
     .eq("event_type", event)
-    .eq("processing_status", "processed")
+    .eq("processing_status", "success")
     .limit(1)
     .maybeSingle();
 
@@ -347,7 +348,7 @@ Deno.serve(async (req: Request) => {
   // Evento que não processamos → loga como ignored, retorna 200
   if (!isActionable(event)) {
     console.log(`[webhook] Ignored event: ${event} | order: ${orderId}`);
-    await logWebhook(db, payload, "ignored");
+    await logWebhook(db, payload, "skipped");
     return json({ status: "ignored", event });
   }
 
@@ -358,8 +359,8 @@ Deno.serve(async (req: Request) => {
     return json({ status: "already_processed" });
   }
 
-  // Loga como received
-  await logWebhook(db, payload, "received");
+  // Loga como recebido (usa "success" pois será atualizado se der erro)
+  await logWebhook(db, payload, "success");
 
   // Rotear por evento
   try {
@@ -383,18 +384,20 @@ Deno.serve(async (req: Request) => {
           emailType: "sem_telefone",
         };
 
-        if (purchaseResult.nextStep === "SEND_WHATSAPP") {
-          fetch(`${supabaseUrl}/functions/v1/send-whatsapp`, {
+        const targetFn = purchaseResult.nextStep === "SEND_WHATSAPP"
+          ? "send-whatsapp"
+          : "send-email";
+
+        try {
+          const sendRes = await fetch(`${supabaseUrl}/functions/v1/${targetFn}`, {
             method: "POST",
             headers: { Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json" },
             body: JSON.stringify(sendBody),
-          }).catch((e: Error) => console.error("[webhook] Failed to trigger send-whatsapp:", e.message));
-        } else {
-          fetch(`${supabaseUrl}/functions/v1/send-email`, {
-            method: "POST",
-            headers: { Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json" },
-            body: JSON.stringify(sendBody),
-          }).catch((e: Error) => console.error("[webhook] Failed to trigger send-email:", e.message));
+          });
+          const sendResult = await sendRes.json();
+          console.log(`[webhook] ${targetFn} response:`, sendResult);
+        } catch (e) {
+          console.error(`[webhook] Failed to call ${targetFn}:`, e instanceof Error ? e.message : e);
         }
         break;
       }
@@ -411,13 +414,7 @@ Deno.serve(async (req: Request) => {
         result = { action: "ignored" };
     }
 
-    // Atualiza log para processed
-    await db
-      .from("webhook_events_log")
-      .update({ processing_status: "processed" })
-      .eq("order_id", orderId)
-      .eq("event_type", event)
-      .eq("processing_status", "received");
+    // Log já foi inserido como "success", não precisa atualizar
 
     console.log(`[webhook] Processed: ${event} | order: ${orderId}`);
     return json({ status: "processed", ...result });
@@ -431,7 +428,7 @@ Deno.serve(async (req: Request) => {
       .update({ processing_status: "error", error_message: msg })
       .eq("order_id", orderId)
       .eq("event_type", event)
-      .eq("processing_status", "received")
+      .eq("processing_status", "success")
       .catch(() => {});
 
     // Retorna 200 mesmo com erro → evita Hotmart reenviar 5x

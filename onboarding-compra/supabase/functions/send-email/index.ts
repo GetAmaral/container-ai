@@ -159,7 +159,7 @@ Deno.serve(async (req: Request) => {
       event_type: `EMAIL_SENT_${emailType.toUpperCase()}`,
       order_id: orderId,
       customer_email: email,
-      processing_status: "processed",
+      processing_status: "success",
       payload: { emailType, userName, productName } as unknown as Record<string, unknown>,
     }).catch((e: Error) => console.error("[email] Failed to log:", e.message));
 
