@@ -181,6 +181,32 @@ Deno.serve(async (req: Request) => {
         .eq("id", profileId);
 
       console.log(`[wpp] Sent OK | attempt: ${attempt} | phone: ${phone}`);
+
+      // Enviar email de confirmação de compra
+      try {
+        const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+        const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+        const emailRes = await fetch(`${supabaseUrl}/functions/v1/send-email`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${serviceKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            profileId,
+            email,
+            userName,
+            productName,
+            orderId,
+            emailType: "confirmacao_compra",
+          }),
+        });
+        const emailResult = await emailRes.json();
+        console.log(`[wpp] Confirmation email response:`, emailResult);
+      } catch (e) {
+        console.error(`[wpp] Failed to send confirmation email:`, e instanceof Error ? e.message : e);
+      }
+
       return json({ status: "sent", attempt });
     }
 

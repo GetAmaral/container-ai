@@ -45,6 +45,7 @@ async function sendEmail(
   to: string,
   userName: string,
   productName: string,
+  emailType: "sem_telefone" | "fallback_whatsapp" | "confirmacao_compra" = "sem_telefone",
 ): Promise<{ ok: boolean; error?: string }> {
   const apiKey = Deno.env.get("BREVO_API_KEY");
   const fromEmail = Deno.env.get("EMAIL_FROM") ?? "Total <noreply@total.com>";
@@ -58,9 +59,30 @@ async function sendEmail(
   const senderName = fromMatch ? fromMatch[1].trim() : "Total";
   const senderEmail = fromMatch ? fromMatch[2].trim() : fromEmail;
 
-  const waMeLink = buildWaMeLink(productName);
+  let subject: string;
+  let html: string;
 
-  const html = `
+  if (emailType === "confirmacao_compra") {
+    subject = "Compra confirmada! Sua conta está ativa";
+    html = `
+    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+      <h2>Olá ${userName}!</h2>
+      <p>Sua compra de <strong>"${productName}"</strong> foi confirmada e sua conta já está <strong>ativa</strong>!</p>
+      <p>Você já pode acessar a plataforma:</p>
+      <p style="text-align: center; margin: 30px 0;">
+        <a href="https://totalassistente.com.br"
+           style="background: #4F46E5; color: white; padding: 14px 28px; border-radius: 8px; text-decoration: none; font-size: 16px; font-weight: bold;">
+          ACESSAR TOTAL ASSISTENTE
+        </a>
+      </p>
+      <hr style="margin: 30px 0; border: none; border-top: 1px solid #eee;">
+      <p style="color: #888; font-size: 13px;">Equipe Total</p>
+    </div>
+    `;
+  } else {
+    subject = "Sua compra foi confirmada! Ative sua conta no Total";
+    const waMeLink = buildWaMeLink(productName);
+    html = `
     <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
       <h2>Olá ${userName}!</h2>
       <p>Sua compra de <strong>"${productName}"</strong> foi confirmada com sucesso!</p>
@@ -77,7 +99,8 @@ async function sendEmail(
       <hr style="margin: 30px 0; border: none; border-top: 1px solid #eee;">
       <p style="color: #888; font-size: 13px;">Equipe Total</p>
     </div>
-  `;
+    `;
+  }
 
   try {
     const res = await fetch("https://api.brevo.com/v3/smtp/email", {
@@ -90,7 +113,7 @@ async function sendEmail(
       body: JSON.stringify({
         sender: { name: senderName, email: senderEmail },
         to: [{ email: to, name: userName }],
-        subject: "Sua compra foi confirmada! Ative sua conta no Total",
+        subject,
         htmlContent: html,
       }),
     });
@@ -119,7 +142,7 @@ Deno.serve(async (req: Request) => {
     userName: string;
     productName: string;
     orderId: string;
-    emailType: "sem_telefone" | "fallback_whatsapp";
+    emailType: "sem_telefone" | "fallback_whatsapp" | "confirmacao_compra";
   };
 
   try {
@@ -152,7 +175,7 @@ Deno.serve(async (req: Request) => {
 
   // Enviar email
   console.log(`[email] Sending ${emailType} to ${email} | order: ${orderId}`);
-  const result = await sendEmail(email, userName, productName);
+  const result = await sendEmail(email, userName, productName, emailType);
 
   if (result.ok) {
     // Registrar envio no webhook_events_log

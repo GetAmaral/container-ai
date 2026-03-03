@@ -94,6 +94,15 @@ function normalizePhone(
     full = full.slice(0, 4) + full.slice(5);
   }
 
+  // Validação de comprimento mínimo
+  if (ddi === "55") {
+    // BR: deve ter exatamente 12 dígitos (55 + DDD 2 + número 8)
+    if (full.length !== 12) return null;
+  } else {
+    // Internacional: mínimo 10 dígitos (DDI + número)
+    if (full.length < 10) return null;
+  }
+
   return full;
 }
 
