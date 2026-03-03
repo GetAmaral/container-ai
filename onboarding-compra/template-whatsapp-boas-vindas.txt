@@ -1,0 +1,25 @@
+================================================================
+  TEMPLATE WHATSAPP - BOAS VINDAS COMPRA
+  Para criar no Meta Business > WhatsApp > Message Templates
+================================================================
+
+  Nome do template: boas_vindas_compra
+  Categoria: MARKETING (ou UTILITY)
+  Idioma: pt_BR
+
+  ---
+
+  Corpo da mensagem:
+
+  Olá {{1}}! Sua compra foi confirmada com sucesso! 🎉
+
+  Sua conta no Total já está ativa. Você pode começar a usar agora mesmo — basta enviar uma mensagem aqui neste chat.
+
+  Se precisar de ajuda, estamos por aqui!
+
+  ---
+
+  Variáveis:
+    {{1}} = nome do user (ex: "João")
+
+================================================================

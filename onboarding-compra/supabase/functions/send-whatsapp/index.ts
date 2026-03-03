@@ -32,13 +32,13 @@ function json(body: Record<string, unknown>, status = 200) {
 
 // --- WhatsApp API ---
 
-async function sendWhatsAppMessage(
+async function sendWhatsAppTemplate(
   phone: string,
   userName: string,
-  productName: string,
 ): Promise<{ ok: boolean; error?: string }> {
   const phoneNumberId = Deno.env.get("WHATSAPP_PHONE_NUMBER_ID");
   const token = Deno.env.get("WHATSAPP_TOKEN");
+  const templateName = Deno.env.get("WHATSAPP_TEMPLATE_BOAS_VINDAS") ?? "boas_vindas_compra";
 
   if (!phoneNumberId || !token) {
     return { ok: false, error: "WhatsApp credentials not configured" };
@@ -56,9 +56,18 @@ async function sendWhatsAppMessage(
         body: JSON.stringify({
           messaging_product: "whatsapp",
           to: phone,
-          type: "text",
-          text: {
-            body: `Olá ${userName}! Sua compra de "${productName}" foi confirmada. Sua conta no Total está ativa! 🎉`,
+          type: "template",
+          template: {
+            name: templateName,
+            language: { code: "pt_BR" },
+            components: [
+              {
+                type: "body",
+                parameters: [
+                  { type: "text", text: userName },
+                ],
+              },
+            ],
           },
         }),
       },
@@ -173,7 +182,7 @@ Deno.serve(async (req: Request) => {
     }
 
     console.log(`[wpp] Attempt ${attempt}/3 | phone: ${phone} | order: ${orderId}`);
-    const result = await sendWhatsAppMessage(phone, userName, productName);
+    const result = await sendWhatsAppTemplate(phone, userName);
 
     if (result.ok) {
       await logAttempt(db, profileId, phone, attempt, "success");
