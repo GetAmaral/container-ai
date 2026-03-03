@@ -360,11 +360,38 @@ Deno.serve(async (req: Request) => {
     let result: Record<string, unknown>;
 
     switch (event) {
-      case "PURCHASE_APPROVED":
-        result = await handlePurchaseApproved(db, payload);
-        // TODO (Story 1.3): se result.nextStep === "SEND_WHATSAPP" → enviar WPP
-        // TODO (Story 1.4): se result.nextStep === "SEND_EMAIL" → enviar email
+      case "PURCHASE_APPROVED": {
+        const purchaseResult = await handlePurchaseApproved(db, payload);
+        result = purchaseResult;
+
+        // Fire-and-forget: chama edge function de envio (não bloqueia o 200)
+        const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+        const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+        const sendBody = {
+          profileId: purchaseResult.profileId,
+          email: purchaseResult.email,
+          phone: purchaseResult.phone,
+          userName: payload.data.buyer.name,
+          productName: payload.data.product.name,
+          orderId: purchaseResult.orderId,
+          emailType: "sem_telefone",
+        };
+
+        if (purchaseResult.nextStep === "SEND_WHATSAPP") {
+          fetch(`${supabaseUrl}/functions/v1/send-whatsapp`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json" },
+            body: JSON.stringify(sendBody),
+          }).catch((e: Error) => console.error("[webhook] Failed to trigger send-whatsapp:", e.message));
+        } else {
+          fetch(`${supabaseUrl}/functions/v1/send-email`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json" },
+            body: JSON.stringify(sendBody),
+          }).catch((e: Error) => console.error("[webhook] Failed to trigger send-email:", e.message));
+        }
         break;
+      }
 
       case "PURCHASE_REFUNDED":
         result = await handleDeactivation(db, payload, "refund");

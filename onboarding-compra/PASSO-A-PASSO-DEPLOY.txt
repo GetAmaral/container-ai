@@ -1,0 +1,234 @@
+================================================================
+  PASSO A PASSO - DEPLOY DAS EDGE FUNCTIONS
+  Dex (Dev) - AIOS | 2026-03-03
+================================================================
+
+
+================================================================
+ ESTRUTURA DOS ARQUIVOS
+================================================================
+
+  supabase/
+  ├── functions/
+  │   ├── hotmart-webhook/index.ts    ← Story 1.1 + 1.2 + 1.6
+  │   ├── send-whatsapp/index.ts      ← Story 1.3
+  │   └── send-email/index.ts         ← Story 1.4
+  └── migrations/
+      ├── 001_webhook_idempotency_index.sql
+      └── 002_whatsapp_attempts_and_email_fields.sql
+
+
+================================================================
+ O QUE CADA EDGE FUNCTION FAZ
+================================================================
+
+  1. hotmart-webhook (PRINCIPAL)
+     - Recebe POST da Hotmart
+     - Valida hottok, payload, idempotência
+     - PURCHASE_APPROVED → salva profile + payment, normaliza phone
+     - PURCHASE_REFUNDED/CHARGEBACK → desativa profile + payment
+     - Chama send-whatsapp (Path A) ou send-email (Path B)
+     - Retorna 200 sempre
+
+  2. send-whatsapp (PATH A - COM TELEFONE)
+     - Recebe: profileId, phone, userName, productName
+     - Envia mensagem via WhatsApp Business API (Meta Graph API)
+     - Retry: 3 tentativas (imediato, 30s, 2min)
+     - Sucesso → marca user como ativado
+     - 3 falhas → chama send-email como fallback
+
+  3. send-email (PATH B - SEM TELEFONE OU FALLBACK)
+     - Recebe: profileId, email, userName, productName, emailType
+     - Envia email via Resend com link wa.me
+     - Controle de duplicata por order_id + emailType
+     - Dois tipos: "sem_telefone" (direto) ou "fallback_whatsapp"
+
+
+================================================================
+ PASSO 1: RODAR AS MIGRATIONS NO SUPABASE
+================================================================
+
+  Ir no Supabase Dashboard > SQL Editor e rodar:
+
+  --- Migration 1: Índices de idempotência ---
+  (copiar conteúdo de 001_webhook_idempotency_index.sql)
+
+  CREATE INDEX IF NOT EXISTS idx_webhook_events_log_order_event
+    ON webhook_events_log(order_id, event_type);
+
+  CREATE INDEX IF NOT EXISTS idx_webhook_events_log_status
+    ON webhook_events_log(processing_status);
+
+  --- Migration 2: Tabela whatsapp_attempts + campos email ---
+  (copiar conteúdo de 002_whatsapp_attempts_and_email_fields.sql)
+
+
+================================================================
+ PASSO 2: CONFIGURAR VARIÁVEIS DE AMBIENTE
+================================================================
+
+  No Supabase Dashboard > Edge Functions > Secrets, adicionar:
+
+  +----------------------------+----------------------------------------------+
+  | Nome                       | Valor                                        |
+  +----------------------------+----------------------------------------------+
+  | HOTMART_HOTTOK             | Token do painel Hotmart (Configurações >      |
+  |                            | Webhook > hottok)                            |
+  +----------------------------+----------------------------------------------+
+  | WHATSAPP_PHONE_NUMBER_ID   | ID do número no Meta Business                |
+  |                            | (ex: 744582292082931)                        |
+  +----------------------------+----------------------------------------------+
+  | WHATSAPP_TOKEN             | Token permanente do WhatsApp Business API     |
+  +----------------------------+----------------------------------------------+
+  | WHATSAPP_BUSINESS_NUMBER   | Número completo (ex: 554391936205)           |
+  +----------------------------+----------------------------------------------+
+  | RESEND_API_KEY             | API Key do Resend (resend.com/api-keys)      |
+  +----------------------------+----------------------------------------------+
+  | EMAIL_FROM                 | Remetente (ex: Total <noreply@seudominio.com>)|
+  +----------------------------+----------------------------------------------+
+
+  OBS: SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY já vêm automáticos
+  nas Edge Functions, não precisa configurar.
+
+
+================================================================
+ PASSO 3: DEPLOY DAS EDGE FUNCTIONS
+================================================================
+
+  Opção A: Via CLI (recomendado)
+  --------------------------------
+  Terminal no diretório do projeto Supabase:
+
+  supabase functions deploy hotmart-webhook --no-verify-jwt
+  supabase functions deploy send-whatsapp
+  supabase functions deploy send-email
+
+  IMPORTANTE: hotmart-webhook usa --no-verify-jwt porque a
+  Hotmart manda POST direto (sem JWT do Supabase).
+  send-whatsapp e send-email são chamados internamente com
+  service_role key, então mantêm a verificação.
+
+  Opção B: Via Dashboard
+  --------------------------------
+  Supabase Dashboard > Edge Functions > New Function
+  - Criar "hotmart-webhook", colar código do index.ts
+  - Criar "send-whatsapp", colar código do index.ts
+  - Criar "send-email", colar código do index.ts
+
+
+================================================================
+ PASSO 4: CONFIGURAR WEBHOOK NA HOTMART
+================================================================
+
+  1. Ir no painel Hotmart > Ferramentas > Webhook
+  2. Adicionar URL:
+     https://<SEU_PROJETO>.supabase.co/functions/v1/hotmart-webhook
+  3. Selecionar eventos:
+     - PURCHASE_APPROVED
+     - PURCHASE_REFUNDED
+     - CHARGEBACK
+  4. Copiar o hottok e colocar no Secrets (Passo 2)
+  5. Salvar
+
+
+================================================================
+ PASSO 5: TESTAR
+================================================================
+
+  1. TESTE MANUAL (curl):
+
+  curl -X POST https://<SEU_PROJETO>.supabase.co/functions/v1/hotmart-webhook \
+    -H "Content-Type: application/json" \
+    -d '{
+      "event": "PURCHASE_APPROVED",
+      "version": "2.0.0",
+      "hottok": "SEU_HOTTOK_AQUI",
+      "data": {
+        "buyer": {
+          "email": "teste@email.com",
+          "name": "Teste Silva",
+          "first_name": "Teste",
+          "last_name": "Silva",
+          "checkout_phone": "43991936205",
+          "checkout_phone_code": "55",
+          "document": "12345678900",
+          "document_type": "CPF"
+        },
+        "purchase": {
+          "order_id": "HP_TEST_001",
+          "status": "APPROVED"
+        },
+        "product": {
+          "id": 123456,
+          "name": "Total Assistente"
+        }
+      }
+    }'
+
+  2. VERIFICAR NO SUPABASE:
+     - webhook_events_log: deve ter registro com processing_status="processed"
+     - profiles: deve ter registro com email "teste@email.com", phone "554391936205"
+     - payments: deve ter registro com transaction_id "HP_TEST_001"
+
+  3. TESTE DE IDEMPOTÊNCIA:
+     - Rodar o mesmo curl de novo
+     - Resposta deve ser: {"status":"already_processed"}
+
+  4. TESTE SEM TELEFONE (Path B):
+     - Mesmo curl mas com "checkout_phone": ""
+     - Deve disparar send-email ao invés de send-whatsapp
+
+  5. TESTE REFUND:
+     - Mesmo curl mas com "event": "PURCHASE_REFUNDED"
+     - profiles.plan_status deve virar false
+     - payments.status deve virar "refunded"
+
+
+================================================================
+ NORMALIZAÇÃO DE TELEFONE (como funciona)
+================================================================
+
+  Entrada Hotmart:  checkout_phone_code="55", checkout_phone="43991936205"
+  Concatena:        "55" + "43991936205" = "5543991936205" (13 dígitos)
+  Regra BR:         13 dígitos e 5º dígito é "9"? Remove.
+  Resultado:        "554391936205" (12 dígitos - padrão WhatsApp BR)
+
+  Outros exemplos:
+    "55" + "4391936205"   → "554391936205"  (já 12, ok)
+    "55" + "11999887766"  → "5511999887766" → remove 9 → "551199887766"
+    "1"  + "2125551234"   → "12125551234"   (internacional, não mexe)
+
+
+================================================================
+ FLUXO COMPLETO
+================================================================
+
+  Hotmart → POST hotmart-webhook
+              ↓
+        Valida hottok ─── inválido → 401
+              ↓
+        Valida payload ── inválido → 400
+              ↓
+        Idempotência ──── já processou → 200
+              ↓
+        PURCHASE_APPROVED:
+          → Salva profile (upsert por email)
+          → Salva payment
+          → Normaliza phone
+          → Tem phone? ──── SIM → fetch send-whatsapp (fire-and-forget)
+                             │       ↓
+                             │    3 tentativas (0s, 30s, 2min)
+                             │       ↓
+                             │    OK? → user ativado
+                             │    Falhou 3x? → fetch send-email (fallback)
+                             │
+                             NÃO → fetch send-email (direto)
+                                     ↓
+                                  Envia email com link wa.me
+              ↓
+        Retorna 200 → Hotmart não reenvia
+
+
+================================================================
+ FIM DO PASSO A PASSO
+================================================================
