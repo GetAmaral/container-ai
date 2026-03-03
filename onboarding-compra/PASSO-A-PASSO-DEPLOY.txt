@@ -39,7 +39,7 @@
 
   3. send-email (PATH B - SEM TELEFONE OU FALLBACK)
      - Recebe: profileId, email, userName, productName, emailType
-     - Envia email via Resend com link wa.me
+     - Envia email via Brevo SMTP com link wa.me
      - Controle de duplicata por order_id + emailType
      - Dois tipos: "sem_telefone" (direto) ou "fallback_whatsapp"
 
@@ -82,7 +82,13 @@
   +----------------------------+----------------------------------------------+
   | WHATSAPP_BUSINESS_NUMBER   | Número completo (ex: 554391936205)           |
   +----------------------------+----------------------------------------------+
-  | RESEND_API_KEY             | API Key do Resend (resend.com/api-keys)      |
+  | BREVO_SMTP_USER            | Login SMTP Brevo                             |
+  +----------------------------+----------------------------------------------+
+  | BREVO_SMTP_PASS            | Senha SMTP Brevo (xsmtpsib-...)              |
+  +----------------------------+----------------------------------------------+
+  | BREVO_SMTP_HOST            | smtp-relay.brevo.com (opcional, já é default) |
+  +----------------------------+----------------------------------------------+
+  | BREVO_SMTP_PORT            | 587 (opcional, já é default)                 |
   +----------------------------+----------------------------------------------+
   | EMAIL_FROM                 | Remetente (ex: Total <noreply@seudominio.com>)|
   +----------------------------+----------------------------------------------+

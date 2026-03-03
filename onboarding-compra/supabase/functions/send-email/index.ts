@@ -2,14 +2,14 @@
 // Story 1.4: Enviar Email de Ativação (Path B)
 // Supabase Edge Function (Deno)
 //
+// Usa Brevo (SMTP relay) para envio de email transacional.
 // Dois gatilhos:
 //   1. sem_telefone: user sem phone no webhook → email direto
 //   2. fallback_whatsapp: WhatsApp falhou 3x → email como plano B
-//
-// Email contém link wa.me com mensagem pré-preenchida.
 // ============================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
 
 // --- Config ---
 
@@ -38,25 +38,28 @@ function buildWaMeLink(productName: string): string {
   return `https://wa.me/${WHATSAPP_NUMBER}?text=${msg}`;
 }
 
-// --- Envio de Email via Resend ---
+// --- Envio de Email via Brevo SMTP ---
 
 async function sendEmail(
   to: string,
   userName: string,
   productName: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  const resendKey = Deno.env.get("RESEND_API_KEY");
+  const smtpHost = Deno.env.get("BREVO_SMTP_HOST") ?? "smtp-relay.brevo.com";
+  const smtpPort = Number(Deno.env.get("BREVO_SMTP_PORT") ?? "587");
+  const smtpUser = Deno.env.get("BREVO_SMTP_USER");
+  const smtpPass = Deno.env.get("BREVO_SMTP_PASS");
   const fromEmail = Deno.env.get("EMAIL_FROM") ?? "Total <noreply@total.com>";
 
-  if (!resendKey) {
-    return { ok: false, error: "RESEND_API_KEY not configured" };
+  if (!smtpUser || !smtpPass) {
+    return { ok: false, error: "BREVO_SMTP_USER or BREVO_SMTP_PASS not configured" };
   }
 
   const waMeLink = buildWaMeLink(productName);
 
   const html = `
     <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-      <h2>Olá ${userName}! 👋</h2>
+      <h2>Olá ${userName}!</h2>
       <p>Sua compra de <strong>"${productName}"</strong> foi confirmada com sucesso!</p>
       <p>Para ativar sua conta, entre em contato conosco via WhatsApp:</p>
       <p style="text-align: center; margin: 30px 0;">
@@ -74,25 +77,27 @@ async function sendEmail(
   `;
 
   try {
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${resendKey}`,
-        "Content-Type": "application/json",
+    const client = new SMTPClient({
+      connection: {
+        hostname: smtpHost,
+        port: smtpPort,
+        tls: false,
+        auth: {
+          username: smtpUser,
+          password: smtpPass,
+        },
       },
-      body: JSON.stringify({
-        from: fromEmail,
-        to: [to],
-        subject: `Sua compra foi confirmada! Ative sua conta no Total`,
-        html,
-      }),
     });
 
-    if (!res.ok) {
-      const err = await res.text();
-      return { ok: false, error: `Resend ${res.status}: ${err}` };
-    }
+    await client.send({
+      from: fromEmail,
+      to,
+      subject: "Sua compra foi confirmada! Ative sua conta no Total",
+      content: "auto",
+      html,
+    });
 
+    await client.close();
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : "Unknown" };
