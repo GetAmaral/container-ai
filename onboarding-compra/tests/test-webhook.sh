@@ -402,8 +402,14 @@ show_cleanup_sql
 echo -e "${YELLOW}Pressione ENTER para iniciar os testes (ou Ctrl+C para cancelar)...${NC}"
 read -r
 
-# Rodar testes sequencialmente (cada um depende de estado limpo ou anterior)
+# Rodar testes sequencialmente
+# Teste 1 + 4 juntos (idempotência precisa do log do teste 1 no banco)
 test_1_phone_invalido
+echo ""
+echo -e "${YELLOW}--- NÃO limpe o banco (teste de idempotência). Pressione ENTER ---${NC}"
+read -r
+
+test_4_idempotencia
 echo ""
 echo -e "${YELLOW}--- Limpe o banco antes do teste 2 (SQL acima) e pressione ENTER ---${NC}"
 read -r
@@ -414,11 +420,6 @@ echo -e "${YELLOW}--- Limpe o banco antes do teste 3 (SQL acima) e pressione ENT
 read -r
 
 test_3_sem_phone
-echo ""
-echo -e "${YELLOW}--- NÃO limpe o banco (teste de idempotência). Pressione ENTER ---${NC}"
-read -r
-
-test_4_idempotencia
 echo ""
 echo -e "${YELLOW}--- Limpe o banco antes do teste 5 (SQL acima) e pressione ENTER ---${NC}"
 read -r
