@@ -163,18 +163,6 @@ Deno.serve(async (req: Request) => {
 
   const db = supabase();
 
-  // Checar se user já está ativado (evitar duplicata)
-  const { data: profile } = await db
-    .from("profiles")
-    .select("plan_status, phone")
-    .eq("id", profileId)
-    .single();
-
-  if (profile?.phone && profile?.plan_status) {
-    console.log(`[wpp] User ${email} already activated. Skipping.`);
-    return json({ status: "already_activated" });
-  }
-
   // 3 tentativas imediatas (sem delay)
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     console.log(`[wpp] Attempt ${attempt}/${MAX_ATTEMPTS} | phone: ${phone} | order: ${orderId}`);
