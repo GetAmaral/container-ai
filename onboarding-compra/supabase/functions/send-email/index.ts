@@ -2,14 +2,15 @@
 // Story 1.4: Enviar Email de Ativação (Path B)
 // Supabase Edge Function (Deno)
 //
-// Usa Brevo (SMTP relay) para envio de email transacional.
+// Usa Brevo HTTP API para envio de email transacional.
+// (SMTP não funciona no Deno Deploy — TCP restrito)
+//
 // Dois gatilhos:
 //   1. sem_telefone: user sem phone no webhook → email direto
 //   2. fallback_whatsapp: WhatsApp falhou 3x → email como plano B
 // ============================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
 
 // --- Config ---
 
@@ -38,22 +39,24 @@ function buildWaMeLink(productName: string): string {
   return `https://wa.me/${WHATSAPP_NUMBER}?text=${msg}`;
 }
 
-// --- Envio de Email via Brevo SMTP ---
+// --- Envio de Email via Brevo HTTP API ---
 
 async function sendEmail(
   to: string,
   userName: string,
   productName: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  const smtpHost = Deno.env.get("BREVO_SMTP_HOST") ?? "smtp-relay.brevo.com";
-  const smtpPort = Number(Deno.env.get("BREVO_SMTP_PORT") ?? "587");
-  const smtpUser = Deno.env.get("BREVO_SMTP_USER");
-  const smtpPass = Deno.env.get("BREVO_SMTP_PASS");
+  const apiKey = Deno.env.get("BREVO_API_KEY");
   const fromEmail = Deno.env.get("EMAIL_FROM") ?? "Total <noreply@total.com>";
 
-  if (!smtpUser || !smtpPass) {
-    return { ok: false, error: "BREVO_SMTP_USER or BREVO_SMTP_PASS not configured" };
+  if (!apiKey) {
+    return { ok: false, error: "BREVO_API_KEY not configured" };
   }
+
+  // Parse "Nome <email>" format
+  const fromMatch = fromEmail.match(/^(.+?)\s*<(.+?)>$/);
+  const senderName = fromMatch ? fromMatch[1].trim() : "Total";
+  const senderEmail = fromMatch ? fromMatch[2].trim() : fromEmail;
 
   const waMeLink = buildWaMeLink(productName);
 
@@ -77,27 +80,26 @@ async function sendEmail(
   `;
 
   try {
-    const client = new SMTPClient({
-      connection: {
-        hostname: smtpHost,
-        port: smtpPort,
-        tls: false,
-        auth: {
-          username: smtpUser,
-          password: smtpPass,
-        },
+    const res = await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      headers: {
+        "api-key": apiKey,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
       },
+      body: JSON.stringify({
+        sender: { name: senderName, email: senderEmail },
+        to: [{ email: to, name: userName }],
+        subject: "Sua compra foi confirmada! Ative sua conta no Total",
+        htmlContent: html,
+      }),
     });
 
-    await client.send({
-      from: fromEmail,
-      to,
-      subject: "Sua compra foi confirmada! Ative sua conta no Total",
-      content: "auto",
-      html,
-    });
+    if (!res.ok) {
+      const err = await res.text();
+      return { ok: false, error: `Brevo API ${res.status}: ${err}` };
+    }
 
-    await client.close();
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : "Unknown" };
@@ -154,14 +156,17 @@ Deno.serve(async (req: Request) => {
 
   if (result.ok) {
     // Registrar envio no webhook_events_log
-    await db.from("webhook_events_log").insert({
+    const { error: logErr } = await db.from("webhook_events_log").insert({
       request_id: crypto.randomUUID(),
       event_type: `EMAIL_SENT_${emailType.toUpperCase()}`,
       order_id: orderId,
       customer_email: email,
       processing_status: "success",
       payload: { emailType, userName, productName } as unknown as Record<string, unknown>,
-    }).catch((e: Error) => console.error("[email] Failed to log:", e.message));
+    });
+    if (logErr) {
+      console.error("[email] Failed to log:", logErr.message);
+    }
 
     console.log(`[email] Sent OK: ${emailType} to ${email}`);
     return json({ status: "sent", emailType });
