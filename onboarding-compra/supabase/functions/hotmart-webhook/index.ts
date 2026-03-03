@@ -21,6 +21,7 @@ interface HotmartBuyer {
 interface HotmartPurchase {
   order_id: string;
   status: string;
+  price?: { value?: number; currency_code?: string };
 }
 
 interface HotmartProduct {
@@ -141,6 +142,7 @@ async function logWebhook(
 ) {
   const { event, data } = payload;
   const { error } = await db.from("webhook_events_log").insert({
+    request_id: crypto.randomUUID(),
     event_type: event,
     order_id: data.purchase.order_id,
     product_name: data.product?.name ?? null,
@@ -215,8 +217,10 @@ async function handlePurchaseApproved(
     email,
     phone: phone,
     plan_type: "standard",
-    status: "approved",
-    plan_status: true,
+    amount: purchase.price?.value ?? 0,
+    currency: purchase.price?.currency_code ?? "BRL",
+    status: "paid",
+    plan_status: "active",
     transaction_id: purchase.order_id,
   });
 
@@ -265,22 +269,23 @@ async function handleDeactivation(
   }
 
   // Idempotência: já desativado?
-  if (payment.status === "refunded" || payment.status === "chargeback") {
+  if (payment.status === "refunded") {
     console.log(`[1.6] Already deactivated: order ${orderId}`);
     return { action: "already_deactivated", orderId };
   }
 
-  // Desativar payment
+  // Desativar payment (CHECK: status = paid|pending|refunded|expired)
+  // Tanto refund quanto chargeback → status "refunded"
   await db
     .from("payments")
     .update({
-      status: reason === "refund" ? "refunded" : "chargeback",
-      plan_status: false,
+      status: "refunded",
+      plan_status: "pending",
       refunded_at: new Date().toISOString(),
     })
     .eq("id", payment.id);
 
-  // Desativar profile
+  // Desativar profile (plan_status é boolean no profiles)
   if (payment.user_id) {
     await db
       .from("profiles")
@@ -325,6 +330,7 @@ Deno.serve(async (req: Request) => {
     // Loga com signature_valid = false
     const db = supabase();
     await db.from("webhook_events_log").insert({
+      request_id: crypto.randomUUID(),
       event_type: event,
       order_id: orderId,
       customer_email: payload.data.buyer.email,

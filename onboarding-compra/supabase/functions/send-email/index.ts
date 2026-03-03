@@ -134,14 +134,16 @@ Deno.serve(async (req: Request) => {
 
   const db = supabase();
 
-  // Controle de duplicata: já enviou email pra esse order_id + tipo?
+  // Controle de duplicata: checa se já logou envio de email no webhook_events_log
   const { data: existing } = await db
-    .from("payments")
-    .select("id, email_enviado, email_tipo")
-    .eq("transaction_id", orderId)
+    .from("webhook_events_log")
+    .select("id")
+    .eq("order_id", orderId)
+    .eq("event_type", `EMAIL_SENT_${emailType.toUpperCase()}`)
+    .limit(1)
     .maybeSingle();
 
-  if (existing?.email_enviado && existing?.email_tipo === emailType) {
+  if (existing) {
     console.log(`[email] Already sent ${emailType} for order ${orderId}. Skipping.`);
     return json({ status: "already_sent" });
   }
@@ -151,15 +153,15 @@ Deno.serve(async (req: Request) => {
   const result = await sendEmail(email, userName, productName);
 
   if (result.ok) {
-    // Registrar no banco
-    await db
-      .from("payments")
-      .update({
-        email_enviado: true,
-        email_tipo: emailType,
-        email_enviado_at: new Date().toISOString(),
-      })
-      .eq("transaction_id", orderId);
+    // Registrar envio no webhook_events_log
+    await db.from("webhook_events_log").insert({
+      request_id: crypto.randomUUID(),
+      event_type: `EMAIL_SENT_${emailType.toUpperCase()}`,
+      order_id: orderId,
+      customer_email: email,
+      processing_status: "processed",
+      payload: { emailType, userName, productName } as unknown as Record<string, unknown>,
+    }).catch((e: Error) => console.error("[email] Failed to log:", e.message));
 
     console.log(`[email] Sent OK: ${emailType} to ${email}`);
     return json({ status: "sent", emailType });
