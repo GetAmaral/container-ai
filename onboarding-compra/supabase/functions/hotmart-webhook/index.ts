@@ -176,6 +176,122 @@ async function alreadyProcessed(
   return !!data;
 }
 
+// --- Story 1.2: Salvar User + Payment ---
+
+async function handlePurchaseApproved(
+  db: ReturnType<typeof supabase>,
+  payload: HotmartPayload,
+) {
+  const { buyer, purchase, product } = payload.data;
+  const email = buyer.email.toLowerCase().trim();
+  const phone = normalizePhone(buyer.checkout_phone_code, buyer.checkout_phone);
+
+  // 1. Upsert profile por email
+  //    - Se não existe: cria com plan_status=true
+  //    - Se existe: atualiza plan_status=true (reativação)
+  //    - Se tem phone (Path A): seta profiles.phone → user auto-ativado
+  const { data: profile, error: profileErr } = await db
+    .from("profiles")
+    .upsert(
+      {
+        email,
+        name: buyer.name,
+        phone: phone,            // null se Path B
+        plan_type: "standard",   // default, pode ajustar por produto
+        plan_status: true,
+      },
+      { onConflict: "email" },
+    )
+    .select("id")
+    .single();
+
+  if (profileErr) {
+    throw new Error(`Failed to upsert profile: ${profileErr.message}`);
+  }
+
+  // 2. Inserir payment
+  const { error: paymentErr } = await db.from("payments").insert({
+    user_id: profile.id,
+    email,
+    phone: phone,
+    plan_type: "standard",
+    status: "approved",
+    plan_status: true,
+    transaction_id: purchase.order_id,
+  });
+
+  if (paymentErr) {
+    // Se payment duplicado (transaction_id), ignora — idempotência
+    if (!paymentErr.message.includes("duplicate")) {
+      throw new Error(`Failed to insert payment: ${paymentErr.message}`);
+    }
+  }
+
+  const nextStep = phone ? "SEND_WHATSAPP" : "SEND_EMAIL";
+  console.log(
+    `[1.2] User saved: ${email} | phone: ${phone ?? "SEM"} | next: ${nextStep} | order: ${purchase.order_id}`,
+  );
+
+  return {
+    action: "activate",
+    orderId: purchase.order_id,
+    profileId: profile.id,
+    email,
+    phone,
+    hasPhone: !!phone,
+    nextStep,
+  };
+}
+
+// --- Story 1.6: Desativar acesso (refund/chargeback) ---
+
+async function handleDeactivation(
+  db: ReturnType<typeof supabase>,
+  payload: HotmartPayload,
+  reason: "refund" | "chargeback",
+) {
+  const orderId = payload.data.purchase.order_id;
+
+  // Buscar payment por transaction_id (order_id)
+  const { data: payment } = await db
+    .from("payments")
+    .select("id, user_id, status")
+    .eq("transaction_id", orderId)
+    .maybeSingle();
+
+  if (!payment) {
+    console.warn(`[1.6] Payment not found for order ${orderId} (${reason}). Ignoring.`);
+    return { action: "user_not_found", orderId, reason };
+  }
+
+  // Idempotência: já desativado?
+  if (payment.status === "refunded" || payment.status === "chargeback") {
+    console.log(`[1.6] Already deactivated: order ${orderId}`);
+    return { action: "already_deactivated", orderId };
+  }
+
+  // Desativar payment
+  await db
+    .from("payments")
+    .update({
+      status: reason === "refund" ? "refunded" : "chargeback",
+      plan_status: false,
+      refunded_at: new Date().toISOString(),
+    })
+    .eq("id", payment.id);
+
+  // Desativar profile
+  if (payment.user_id) {
+    await db
+      .from("profiles")
+      .update({ plan_status: false })
+      .eq("id", payment.user_id);
+  }
+
+  console.log(`[1.6] Deactivated: order ${orderId} | reason: ${reason}`);
+  return { action: "deactivated", orderId, reason };
+}
+
 // --- Main Handler ---
 
 Deno.serve(async (req: Request) => {
@@ -244,31 +360,18 @@ Deno.serve(async (req: Request) => {
     let result: Record<string, unknown>;
 
     switch (event) {
-      case "PURCHASE_APPROVED": {
-        const phone = normalizePhone(
-          payload.data.buyer.checkout_phone_code,
-          payload.data.buyer.checkout_phone,
-        );
-        result = {
-          action: "activate",
-          orderId,
-          email: payload.data.buyer.email,
-          phone,
-          hasPhone: !!phone,
-        };
-        // TODO (Story 1.2): salvar user no banco
-        // TODO (Story 1.3/1.4): se hasPhone → WhatsApp, senão → Email
+      case "PURCHASE_APPROVED":
+        result = await handlePurchaseApproved(db, payload);
+        // TODO (Story 1.3): se result.nextStep === "SEND_WHATSAPP" → enviar WPP
+        // TODO (Story 1.4): se result.nextStep === "SEND_EMAIL" → enviar email
         break;
-      }
 
       case "PURCHASE_REFUNDED":
-        result = { action: "deactivate", reason: "refund", orderId };
-        // TODO (Story 1.6): desativar acesso
+        result = await handleDeactivation(db, payload, "refund");
         break;
 
       case "CHARGEBACK":
-        result = { action: "deactivate", reason: "chargeback", orderId };
-        // TODO (Story 1.6): desativar acesso
+        result = await handleDeactivation(db, payload, "chargeback");
         break;
 
       default:
