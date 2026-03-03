@@ -95,13 +95,16 @@ async function logAttempt(
   status: "success" | "failed",
   error?: string,
 ) {
-  await db.from("whatsapp_attempts").insert({
+  const { error: insertErr } = await db.from("whatsapp_attempts").insert({
     user_id: profileId,
     phone,
     attempt_num: attemptNum,
     status,
     error: error ?? null,
-  }).catch((e: Error) => console.error("[wpp] Failed to log attempt:", e.message));
+  });
+  if (insertErr) {
+    console.error("[wpp] Failed to log attempt:", insertErr.message);
+  }
 }
 
 // --- Fallback: chamar send-email ---
