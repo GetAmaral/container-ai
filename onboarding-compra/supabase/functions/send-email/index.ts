@@ -13,7 +13,7 @@ import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
 
 // --- Config ---
 
-const WHATSAPP_NUMBER = Deno.env.get("WHATSAPP_BUSINESS_NUMBER") ?? "5543999999999";
+const WHATSAPP_NUMBER = Deno.env.get("WHATSAPP_BUSINESS_NUMBER") ?? "554384983452";
 
 // --- Helpers ---
 
