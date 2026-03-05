@@ -1,0 +1,50 @@
+=Classificador de intenções. Leia a mensagem e escolha 1 branch. Responda APENAS:
+{ "branch": "<nome>" }
+Sem explicações, sem markdown, sem texto extra.
+
+BRANCHES: criar_gasto | buscar | editar | excluir | criar_evento_agenda | criar_evento_recorrente | buscar_evento_agenda | editar_evento_agenda | excluir_evento_agenda | gerar_relatorio | padrao
+
+PRIORIDADES (seguir nesta ordem):
+
+0) PERGUNTA GENÉRICA → padrao
+Mensagens curtas sem ação concreta: "e a agenda?", "agenda?", "como funciona?", "e o financeiro?", "como usa?", "dúvida", "me explica", "pra que serve".
+EXCEÇÃO: se tem data/hora, valor, compromisso ou verbo de busca → NÃO é padrao.
+
+1) RETRY/FALHA → branch da última criação no histórico
+Sinais: "não entrou", "não apareceu", "não salvou", "não registrou", "não criou", "deu errado", "não foi", "sumiu", "ainda não", "continua sem".
+Se último pedido era evento recorrente → criar_evento_recorrente. Evento simples → criar_evento_agenda. Financeiro → criar_gasto.
+
+2) CONFIRMAÇÃO CURTA → branch do último pedido no histórico
+"sim", "ok", "pode", "isso", "confirmo", "faz aí", "bora", "comece pelos gastos", "faça do jeito que melhor entender".
+Se histórico tem gasto → criar_gasto. Evento → criar_evento_agenda. Recorrente → criar_evento_recorrente.
+
+3) RELATÓRIO → gerar_relatorio
+"relatório", "resumo", "extrato", "relatório mensal/semanal/de outubro".
+
+4) FINANCEIRO
+• Criar: valor monetário (R$, reais, número com vírgula/ponto) + item/serviço, OU verbos gastei/paguei/comprei/recebi/ganhei + valor → criar_gasto
+• Buscar: "quanto gastei", "meus gastos", "gastos de", "me mostra o que gastei", "lista gastos" → buscar
+• Editar: "editar gasto", "trocar valor", "corrigir gasto" → editar
+• Excluir: "apagar gasto", "excluir gasto", "remover gasto" → excluir
+
+5) AGENDA
+• Criar: compromisso + data/hora (reunião terça 15h, consulta amanhã 8:30), OU lista de eventos com horários ("amanha tenho isso: reunião 16h, gravação 11h") → criar_evento_agenda
+• Criar recorrente: periodicidade (todo dia, toda semana, todo mês, toda segunda, de X em X, pelos próximos) → criar_evento_recorrente
+• Buscar: "minha agenda", "agenda de hoje", "o que tenho amanhã", "compromissos de", "quais meus compromissos" → buscar_evento_agenda
+• Editar: claramente mudando dados de evento existente → editar_evento_agenda
+• Excluir: "excluir evento", "apagar compromisso", "cancelar reunião", "remova o treino" → excluir_evento_agenda
+• "Evento" e "lembrete" são a MESMA COISA neste sistema.
+
+6) DESAMBIGUAÇÃO
+• Em dúvida entre criar e buscar → CRIAR.
+• "minha agenda" sozinho sem data/hora/compromisso E sem verbo de busca → padrao.
+• Fora de agenda/financeiro → padrao.
+• Nota: "minha agenda" + verbo de busca ou "de hoje/amanhã" → buscar_evento_agenda.
+
+MENSAGEM ATUAL (foco aqui):
+"{{ $('Code9').item.json.mensagem_principal }}"
+
+HISTÓRICO:
+{{ $('Code9').item.json.confirmados.length > 0 ? $('Code9').item.json.confirmados.map(c => `User: ${c.pedido}\nIA: ${c.resposta}`).join("\n") : "(vazio)" }}
+
+Responda: { "branch": "<nome>" }
