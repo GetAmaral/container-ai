@@ -1,0 +1,151 @@
+================================================================================
+ BANNER DE CONSENTIMENTO LGPD - PASSO A PASSO + DIAGNOSTICO
+ Squad Pixel | @pixel-compliance (Shield)
+ Data: 2026-03-05
+================================================================================
+
+## DIAGNOSTICO
+
+### Situacao Atual
+- O site TEM pagina /cookies com politica basica
+- A politica menciona apenas cookies "essenciais" e "funcionalidade"
+- NAO existe banner de consentimento ativo
+- NAO existe categoria "marketing" na politica
+- O site usa LocalStorage para theme e auth (essenciais)
+
+### Problema LGPD
+- A LGPD (Lei 13.709/2018) exige consentimento PREVIO para tracking
+- O Facebook Pixel coleta dados de navegacao = dado pessoal
+- Sem banner, qualquer pixel instalado viola a LGPD
+- Multa: ate 2% do faturamento ou R$ 50 milhoes por infracao
+
+### O que este codigo resolve
+- Banner aparece na primeira visita
+- Pixel so carrega APOS usuario clicar "Aceitar todos"
+- Se clicar "Apenas essenciais", pixel NAO carrega
+- Preferencia salva no LocalStorage (persiste entre visitas)
+- Funcao global hasMarketingConsent() para checar em qualquer lugar
+
+================================================================================
+
+## PASSO A PASSO DE IMPLEMENTACAO
+
+### Pre-Requisitos
+  [ ] Acesso ao repositorio do site (totalAssistente)
+  [ ] Editor de codigo (VS Code recomendado)
+  [ ] Node.js instalado para rodar o projeto
+
+### Passo 1: Criar o componente CookieConsentBanner
+  O QUE FAZER: Criar arquivo com o componente React
+  ONDE: site/src/components/CookieConsentBanner.tsx
+  COMO: Copiar o conteudo do arquivo 02-consent-banner-code.txt
+        (a parte "ARQUIVO: src/components/CookieConsentBanner.tsx")
+  VERIFICACAO: Arquivo existe e nao tem erros de TypeScript
+
+### Passo 2: Criar utilitario de consentimento
+  O QUE FAZER: Criar funcoes de gerenciamento de consentimento
+  ONDE: site/src/utils/consentManager.ts
+  COMO: Copiar a parte "ARQUIVO: src/utils/consentManager.ts" do code
+  VERIFICACAO: Importar e usar consentManager.hasMarketing() retorna false
+
+### Passo 3: Adicionar CSS da animacao
+  O QUE FAZER: Adicionar keyframe de animacao do banner
+  ONDE: site/src/index.css (no final do arquivo)
+  COMO: Adicionar:
+    @keyframes slide-up {
+      from { transform: translateY(100%); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    .animate-slide-up {
+      animation: slide-up 0.4s ease-out;
+    }
+  VERIFICACAO: Banner aparece com animacao suave de baixo para cima
+
+### Passo 4: Adicionar banner ao App.tsx
+  O QUE FAZER: Importar e renderizar o banner no App principal
+  ONDE: site/src/App.tsx
+  COMO:
+    1. Adicionar import no topo:
+       import { CookieConsentBanner } from "./components/CookieConsentBanner";
+
+    2. Adicionar componente DENTRO do BrowserRouter, ANTES do </Suspense>:
+       <CookieConsentBanner />
+
+    O trecho do App.tsx ficaria assim:
+       <BrowserRouter>
+         <ScrollToTop />
+         <WhatsAppButton />
+         <CookieConsentBanner />    {/* ← ADICIONAR AQUI */}
+         <Suspense fallback={<LoadingSpinner />}>
+           <Routes>
+             ...
+           </Routes>
+         </Suspense>
+       </BrowserRouter>
+
+  VERIFICACAO: Abrir o site e ver banner aparecer apos 1.5 segundos
+
+### Passo 5: Atualizar pagina /cookies
+  O QUE FAZER: Adicionar categoria "Marketing" na politica de cookies
+  ONDE: site/src/pages/Cookies.tsx
+  COMO: Na secao "Tecnologias que Utilizamos", adicionar APOS
+        item "2. Tecnologias de Funcionalidade":
+
+    <div>
+      <h3 className="font-semibold text-foreground mb-2">
+        3. Tecnologias de Marketing (opcionais)
+      </h3>
+      <p className="text-muted-foreground text-sm">
+        Utilizadas apenas com seu consentimento explicito para
+        medir a eficacia de nossos anuncios e melhorar sua
+        experiencia. Voce pode aceitar ou recusar no banner de
+        cookies.
+      </p>
+      <ul className="mt-2 text-sm text-muted-foreground space-y-1">
+        <li>• <strong>Meta Pixel:</strong> Mede conversoes de
+            anuncios do Facebook/Instagram. Dados anonimizados.</li>
+      </ul>
+    </div>
+
+  VERIFICACAO: Acessar /cookies e ver nova categoria listada
+
+### Passo 6: Testar fluxo completo
+  TESTE 1: Primeira visita
+    - Limpar LocalStorage do site
+    - Acessar o site
+    - Banner deve aparecer apos 1.5s
+    - Clicar "Apenas essenciais"
+    - Banner some, pixel NAO carrega
+
+  TESTE 2: Aceitar marketing
+    - Limpar LocalStorage do site
+    - Acessar o site
+    - Clicar "Aceitar todos"
+    - Banner some, pixel CARREGA (evento loadFacebookPixel)
+
+  TESTE 3: Persistencia
+    - Apos aceitar, recarregar a pagina
+    - Banner NAO deve reaparecer
+    - Pixel deve carregar automaticamente
+
+================================================================================
+
+## RISCOS E MITIGACOES
+
+  Risco: Usuario limpa cookies e perde consentimento
+  Probabilidade: Baixa
+  Impacto: Baixo (banner reaparece, pede consentimento de novo)
+  Mitigacao: Nenhuma necessaria, comportamento esperado
+
+  Risco: Banner atrapalha UX no mobile
+  Probabilidade: Media
+  Impacto: Medio
+  Mitigacao: Banner compacto, max-width limitado, botoes claros
+
+  Risco: Consentimento nao sincronizado entre dispositivos
+  Probabilidade: Alta
+  Impacto: Baixo (cada dispositivo tem seu consentimento)
+  Mitigacao: Nenhuma necessaria para LGPD (consentimento por dispositivo e valido)
+
+================================================================================
+Gerado por: Squad Pixel | @pixel-compliance (Shield)

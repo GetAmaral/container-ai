@@ -1,0 +1,203 @@
+// ============================================================================
+// CONVERSIONS API (CAPI) - PURCHASE SERVER-SIDE
+// Squad Pixel | @pixel-architect (Beacon)
+// ============================================================================
+// O evento Purchase NAO pode ser rastreado pelo pixel client-side porque:
+// 1. O checkout acontece na Hotmart (dominio diferente)
+// 2. O pixel do site nao tem acesso ao checkout externo
+// 3. A unica forma de saber que houve compra e via webhook da Hotmart
+//
+// SOLUCAO: Enviar evento Purchase via Meta Conversions API (server-side)
+//          diretamente da Edge Function que recebe o webhook da Hotmart.
+// ============================================================================
+
+
+// --- ARQUIVO: supabase/functions/hotmart-webhook/pixel-capi.ts ---
+// Modulo para enviar eventos via Meta Conversions API
+// Este arquivo deve ficar JUNTO com o index.ts do hotmart-webhook
+
+const PIXEL_ID = "1584825002799208";
+// IMPORTANTE: Gerar Access Token no Meta Events Manager
+// Configuracoes > Conversions API > Gerar token de acesso
+const ACCESS_TOKEN = "SEU_ACCESS_TOKEN_AQUI"; // ← SUBSTITUIR
+
+interface CAPIEvent {
+  event_name: string;
+  event_time: number;
+  event_id: string;
+  event_source_url?: string;
+  action_source: string;
+  user_data: {
+    em?: string[];    // email hasheado SHA256
+    ph?: string[];    // telefone hasheado SHA256
+    client_ip_address?: string;
+    client_user_agent?: string;
+    fbc?: string;     // Facebook click ID (cookie _fbc)
+    fbp?: string;     // Facebook browser ID (cookie _fbp)
+  };
+  custom_data?: {
+    value?: number;
+    currency?: string;
+    content_name?: string;
+    content_type?: string;
+    content_ids?: string[];
+    order_id?: string;
+  };
+}
+
+/**
+ * Hasheia um valor com SHA256 (exigido pela Meta CAPI)
+ */
+async function hashSHA256(value: string): Promise<string> {
+  const normalized = value.trim().toLowerCase();
+  const encoder = new TextEncoder();
+  const data = encoder.encode(normalized);
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(hash))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/**
+ * Normaliza telefone brasileiro para formato E.164
+ * Ex: "(11) 99999-9999" → "5511999999999"
+ */
+function normalizePhone(phone: string): string {
+  const digits = phone.replace(/\D/g, "");
+  if (digits.startsWith("55")) return digits;
+  if (digits.length === 11) return "55" + digits;
+  if (digits.length === 10) return "55" + digits;
+  return "55" + digits;
+}
+
+/**
+ * Envia evento Purchase para Meta Conversions API
+ */
+export async function sendPurchaseEvent(params: {
+  email: string;
+  phone?: string;
+  value: number;
+  currency: string;
+  planType: string;
+  transactionId: string;
+}): Promise<{ success: boolean; error?: string }> {
+  try {
+    // Hashear dados do usuario
+    const hashedEmail = await hashSHA256(params.email);
+    const hashedPhone = params.phone
+      ? await hashSHA256(normalizePhone(params.phone))
+      : undefined;
+
+    const event: CAPIEvent = {
+      event_name: "Purchase",
+      event_time: Math.floor(Date.now() / 1000),
+      event_id: `purchase_${params.transactionId}`, // Deduplicacao
+      action_source: "website",
+      user_data: {
+        em: [hashedEmail],
+        ...(hashedPhone && { ph: [hashedPhone] }),
+      },
+      custom_data: {
+        value: params.value,
+        currency: params.currency,
+        content_name: params.planType,
+        content_type: "subscription",
+        content_ids: [params.planType],
+        order_id: params.transactionId,
+      },
+    };
+
+    const response = await fetch(
+      `https://graph.facebook.com/v21.0/${PIXEL_ID}/events`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          data: [event],
+          access_token: ACCESS_TOKEN,
+        }),
+      }
+    );
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      console.error("CAPI error:", result);
+      return { success: false, error: JSON.stringify(result) };
+    }
+
+    console.log("CAPI Purchase sent:", {
+      event_id: event.event_id,
+      events_received: result.events_received,
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error("CAPI exception:", error);
+    return { success: false, error: String(error) };
+  }
+}
+
+
+// ============================================================================
+// INTEGRACAO NO WEBHOOK DA HOTMART
+// ============================================================================
+// No arquivo supabase/functions/hotmart-webhook/index.ts,
+// adicionar a chamada apos confirmar o pagamento no banco.
+//
+// Exemplo de integracao (adaptar ao codigo existente):
+//
+//   import { sendPurchaseEvent } from "./pixel-capi.ts";
+//
+//   // ... apos inserir/atualizar payment no banco ...
+//
+//   if (webhookEvent === "PURCHASE_APPROVED" || webhookEvent === "PURCHASE_COMPLETE") {
+//     // Enviar para Meta Conversions API
+//     const capiResult = await sendPurchaseEvent({
+//       email: buyerEmail,       // email do comprador (vem no webhook)
+//       phone: buyerPhone,       // telefone (se disponivel)
+//       value: purchaseAmount,   // valor da compra
+//       currency: "BRL",
+//       planType: planType,      // "premium-anual"
+//       transactionId: transactionId,  // ID da transacao Hotmart
+//     });
+//
+//     if (capiResult.success) {
+//       console.log("Purchase event sent to Meta CAPI");
+//     } else {
+//       console.error("Failed to send CAPI event:", capiResult.error);
+//     }
+//   }
+
+
+// ============================================================================
+// COMO GERAR O ACCESS TOKEN
+// ============================================================================
+// 1. Acessar: https://business.facebook.com/events_manager
+// 2. Selecionar pixel "1584825002799208"
+// 3. Ir em "Configuracoes" (Settings)
+// 4. Rolar ate "Conversions API"
+// 5. Clicar "Gerar token de acesso" (Generate access token)
+// 6. Copiar o token gerado
+// 7. Adicionar como Secret na Edge Function:
+//    → Supabase Dashboard > Edge Functions > hotmart-webhook > Secrets
+//    → Adicionar: META_CAPI_TOKEN = <seu_token>
+// 8. No codigo, trocar:
+//    const ACCESS_TOKEN = "SEU_ACCESS_TOKEN_AQUI";
+//    por:
+//    const ACCESS_TOKEN = Deno.env.get("META_CAPI_TOKEN") || "";
+//
+// IMPORTANTE: NUNCA commitar o token no codigo. Usar variaveis de ambiente.
+
+
+// ============================================================================
+// DEDUPLICACAO CLIENT + SERVER
+// ============================================================================
+// Se eventualmente voce implementar Purchase client-side tambem
+// (ex: quando usuario volta ao site apos comprar), use o MESMO event_id:
+//
+//   Client-side: fbq('track', 'Purchase', {..., event_id: 'purchase_HOTMART123'})
+//   Server-side: event_id: 'purchase_HOTMART123'
+//
+// O Facebook automaticamente deduplica eventos com mesmo event_id,
+// garantindo que a compra so e contada UMA VEZ.

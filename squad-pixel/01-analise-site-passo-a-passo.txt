@@ -1,0 +1,160 @@
+================================================================================
+ ANALISE DO SITE - DIAGNOSTICO COMPLETO
+ Squad Pixel | @pixel-analyst (Tracker)
+ Site: Total Assistente (totalassistente.com.br)
+ Data: 2026-03-05
+================================================================================
+
+## 1. PERFIL TECNICO DO SITE
+
+- Framework: React 18 + Vite + TypeScript
+- UI: Tailwind CSS + shadcn/ui (componentes)
+- Roteamento: React Router v7 (SPA - Single Page Application)
+- Backend: Supabase (Auth, PostgreSQL, Edge Functions)
+- Pagamento: Hotmart (checkout externo, abre em nova aba)
+- Deploy: Docker + Nginx
+- CDN: Cloudflare
+
+IMPORTANTE: Por ser SPA (React Router), a navegacao entre paginas NAO recarrega
+o site. Isso significa que o pixel base so dispara PageView UMA VEZ no load
+inicial. Precisamos de um listener especial para SPA.
+
+================================================================================
+
+## 2. MAPA COMPLETO DE ROTAS
+
+### Paginas Publicas (visitantes nao logados)
+  /                    → Landing page (Hero + Resultados + Como Funciona + Pricing + FAQ)
+  /conta               → Tela de login/cadastro unificada
+  /login               → Alias para /conta
+  /signup              → Alias para /conta
+  /planos              → Pagina de planos (PricingSection isolada)
+  /esqueci-senha       → Recuperacao de senha
+  /terms               → Termos de uso
+  /privacy             → Politica de privacidade
+  /cookies             → Politica de cookies
+
+### Paginas Protegidas (usuario logado)
+  /dashboard           → Dashboard principal (financeiro)
+  /investimentos       → Gestao de investimentos
+  /relatorios          → Relatorios financeiros
+  /agenda              → Agenda integrada
+  /profile             → Perfil do usuario
+  /completar-perfil    → Completar cadastro (nome + telefone)
+  /sessoes-ativas      → Sessoes de login ativas
+  /calendario          → Calendario (acesso direto)
+
+### Paginas de Fluxo (auth callbacks)
+  /auth/callback           → Callback de autenticacao
+  /auth/google-calendar    → Callback Google Calendar
+  /auth/error              → Erro de autenticacao
+  /login-sucesso           → Tela pos-login
+  /verificar-email         → Verificacao de email
+  /conta-ativada           → Conta ativada
+  /redefinir-senha         → Reset de senha
+  /otp-verification        → Verificacao OTP
+
+================================================================================
+
+## 3. FUNIL DE CONVERSAO MAPEADO
+
+  ETAPA 1: ATRACAO
+  Visitante chega na landing page (/)
+  → Ve Hero Section com mockup WhatsApp
+  → Scroll para "Como Funciona" (3 passos)
+  → Scroll para Pricing
+
+  ETAPA 2: INTERESSE
+  → Ve plano Premium Anual R$ 37,90/mes (12x)
+  → Le features do plano
+  → Clica "Garantir Oferta" (botao principal)
+
+  ETAPA 3: CHECKOUT
+  → handleCheckout("premium-anual") e chamado
+  → Supabase Edge Function "create-checkout" gera URL Hotmart
+  → window.open(checkoutUrl, '_blank') abre Hotmart em nova aba
+  → PERDE RASTREIO do pixel neste ponto (dominio diferente)
+
+  ETAPA 4: POS-COMPRA
+  → Hotmart envia webhook para "hotmart-webhook" Edge Function
+  → Cria registro em tabela "payments" no Supabase
+  → Usuario volta ao site e faz login
+  → Redirecionado para /completar-perfil (se novo)
+  → Redirecionado para /dashboard
+
+  FLUXO ALTERNATIVO: WHATSAPP
+  → Botao WhatsApp flutuante em todas as paginas
+  → Abre wa.me/message/NBWSOI45VG7KL1 em nova aba
+
+================================================================================
+
+## 4. GARGALOS E FALHAS TECNICAS
+
+### GARGALO 1: SPA sem PageView em navegacao (CRITICO)
+  - O pixel base so dispara PageView no primeiro load
+  - React Router navega sem recarregar a pagina
+  - SOLUCAO: Listener no React Router que dispara PageView a cada navegacao
+
+### GARGALO 2: Checkout externo perde rastreio (CRITICO)
+  - Hotmart abre em nova aba (window.open)
+  - Pixel do site NAO rastreia o que acontece na Hotmart
+  - Nao tem como saber se usuario completou a compra pelo pixel client-side
+  - SOLUCAO: Conversions API (server-side) no webhook da Hotmart
+
+### GARGALO 3: Sem banner de consentimento (CRITICO para LGPD)
+  - Site tem pagina /cookies mas NAO tem banner ativo
+  - Politica de cookies nao menciona cookies de marketing/tracking
+  - SOLUCAO: Banner de consentimento + categoria "Marketing"
+
+### GARGALO 4: Botao WhatsApp sem tracking (MEDIO)
+  - window.open() redireciona antes de qualquer tracking
+  - SOLUCAO: Disparar evento Contact ANTES do window.open()
+
+### GARGALO 5: Scroll tracking inexistente (BAIXO)
+  - Nao ha como saber se usuario viu a secao de pricing
+  - SOLUCAO: Intersection Observer para secao #pricing
+
+================================================================================
+
+## 5. EVENTOS RECOMENDADOS
+
+### Eventos Standard (obrigatorios)
+  PageView              → Toda navegacao (com fix SPA)
+  ViewContent           → Landing (/), Planos (/planos), scroll ate #pricing
+  Lead                  → Cadastro iniciado em /conta (signup)
+  CompleteRegistration  → Perfil completado em /completar-perfil
+  InitiateCheckout      → Clique em "Garantir Oferta" (handleSubscribe)
+  Purchase              → Pagamento confirmado (via Conversions API/Hotmart webhook)
+  Contact               → Clique no botao WhatsApp
+
+### Eventos Custom (recomendados)
+  ScrollToPrice         → Scroll ate secao #pricing
+  ClickCTA              → Clique em "Quero um assistente" no Hero
+  LoginSuccess          → Login bem-sucedido
+  DashboardView         → Acesso ao dashboard (engajamento)
+  GoogleCalendarConnect → Conectou Google Calendar
+
+================================================================================
+
+## 6. BANCO DE DADOS - TABELAS RELEVANTES
+
+  payments         → id, user_id, plan_type, amount, status, created_at
+  profiles         → id, name, phone, email (para matching hasheado)
+  subscriptions    → user_id, plan_type, status, start_date, end_date
+  whatsapp_leads   → id, phone, source, created_at (vazia)
+  short_links      → UTM tracking
+  user_calendar    → eventos sincronizados
+
+================================================================================
+
+## 7. PROXIMOS PASSOS
+
+  1. Implementar banner de consentimento LGPD (consent-banner-code.txt)
+  2. Instalar pixel base com fix SPA (pixel-base-code.txt)
+  3. Configurar eventos de tracking (eventos-tracking-code.txt)
+  4. Criar schema Supabase para pixel (supabase-schema-code.txt)
+  5. Implementar Conversions API para Purchase (conversions-api-code.txt)
+  6. Validar tudo (pixel-validation-passo-a-passo.txt)
+
+================================================================================
+Gerado por: Squad Pixel | @pixel-analyst (Tracker)

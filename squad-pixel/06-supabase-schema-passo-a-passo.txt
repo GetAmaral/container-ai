@@ -1,0 +1,144 @@
+================================================================================
+ SUPABASE SCHEMA - PASSO A PASSO + DIAGNOSTICO
+ Squad Pixel | @pixel-architect (Beacon)
+ Data: 2026-03-05
+================================================================================
+
+## DIAGNOSTICO
+
+### Por que banco proprio alem do Facebook?
+  - Facebook Events Manager mostra dados DELE, nao seus
+  - Dados do Facebook tem delay de ate 72h
+  - Voce nao controla a retencao (Facebook pode mudar regras)
+  - Com dados proprios, voce pode:
+    → Criar dashboards customizados
+    → Cruzar dados de pixel com dados de pagamento
+    → Auditar consentimentos LGPD
+    → Exportar dados quando quiser
+    → Manter historico independente
+
+### Tabelas Criadas
+  pixel_events        → Cada evento disparado (PageView, Lead, etc.)
+  pixel_sessions      → Sessoes anonimas de visitantes
+  pixel_consent_log   → Registro de consentimentos (LGPD obrigatorio)
+  pixel_funnel_daily  → Metricas diarias agregadas
+
+### Integracao com banco existente
+  - As tabelas tem prefixo "pixel_" para nao conflitar
+  - Usam referencia para auth.users quando usuario esta logado
+  - RLS habilitado (seguranca)
+  - Service role para Edge Functions, anon para tracking client-side
+
+================================================================================
+
+## PASSO A PASSO DE IMPLEMENTACAO
+
+### Pre-Requisitos
+  [ ] Acesso ao Supabase Dashboard como admin
+  [ ] Projeto: ldbdtakddxznfridsarn
+
+### Passo 1: Abrir SQL Editor
+  O QUE FAZER: Acessar o editor SQL do Supabase
+  ONDE: https://supabase.com/dashboard/project/ldbdtakddxznfridsarn/sql
+  COMO:
+    1. Acessar Supabase Dashboard
+    2. Selecionar projeto "ldbdtakddxznfridsarn"
+    3. Menu lateral > SQL Editor
+    4. Clicar "New Query"
+
+  VERIFICACAO: Editor SQL aberto
+
+### Passo 2: Executar SQL de criacao
+  O QUE FAZER: Criar todas as tabelas de pixel
+  ONDE: SQL Editor do Supabase
+  COMO:
+    1. Copiar TODO o conteudo de 06-supabase-schema-code.txt
+    2. Colar no SQL Editor
+    3. Clicar "Run" (ou Ctrl+Enter)
+    4. Verificar que nao houve erros
+
+  VERIFICACAO: Mensagem "Success" sem erros
+
+### Passo 3: Verificar tabelas criadas
+  O QUE FAZER: Confirmar que tabelas existem
+  ONDE: Supabase Dashboard > Table Editor
+  COMO:
+    1. Menu lateral > Table Editor
+    2. Procurar tabelas:
+       - pixel_events
+       - pixel_sessions
+       - pixel_consent_log
+       - pixel_funnel_daily
+    3. Verificar que todas tem colunas corretas
+
+  VERIFICACAO: 4 tabelas + 1 view (pixel_funnel_summary) criadas
+
+### Passo 4: Verificar RLS
+  O QUE FAZER: Confirmar que RLS esta habilitado
+  ONDE: Supabase Dashboard > Authentication > Policies
+  COMO:
+    1. Menu lateral > Authentication > Policies
+    2. Verificar que cada tabela pixel_* tem policies configuradas
+    3. Confirmar:
+       - service_role: acesso total
+       - anon: apenas INSERT em pixel_events e pixel_consent_log
+       - authenticated: apenas SELECT nos proprios dados
+
+  VERIFICACAO: Policies ativas em todas as tabelas
+
+### Passo 5: Testar insercao de evento
+  O QUE FAZER: Inserir evento teste para validar
+  ONDE: SQL Editor
+  COMO:
+    INSERT INTO public.pixel_events (
+      event_name, event_type, page_path, anonymous_id, consent_given
+    ) VALUES (
+      'PageView', 'standard', '/', 'test_anon_123', true
+    );
+
+    -- Verificar:
+    SELECT * FROM public.pixel_events WHERE anonymous_id = 'test_anon_123';
+
+    -- Limpar teste:
+    DELETE FROM public.pixel_events WHERE anonymous_id = 'test_anon_123';
+
+  VERIFICACAO: Insert funciona e dados corretos
+
+### Passo 6: Testar view de funil
+  O QUE FAZER: Inserir dados de teste e verificar view
+  ONDE: SQL Editor
+  COMO:
+    INSERT INTO public.pixel_funnel_daily (
+      date, unique_visitors, saw_pricing, clicked_checkout, purchases, total_revenue
+    ) VALUES (
+      '2026-03-05', 100, 45, 12, 3, 113.70
+    );
+
+    SELECT * FROM public.pixel_funnel_summary;
+
+    -- Deve mostrar:
+    -- pct_saw_pricing: 45.0
+    -- pct_checkout: 26.7
+    -- pct_purchase: 25.0
+    -- overall_conversion_rate: 3.00
+
+    -- Limpar teste:
+    DELETE FROM public.pixel_funnel_daily WHERE date = '2026-03-05';
+
+  VERIFICACAO: View calcula taxas corretamente
+
+================================================================================
+
+## NOTA SOBRE INTEGRACAO
+
+  A integracao de enviar eventos do browser para essas tabelas
+  sera feita via funcao no facebookPixel.ts ou via Edge Function.
+  Isso e OPCIONAL e pode ser implementado depois.
+
+  Por agora, o mais importante e:
+  1. Tabelas existirem para receber dados
+  2. Conversions API (Purchase) ja salvar aqui
+  3. Consent log registrar consentimentos
+
+================================================================================
+Gerado por: Squad Pixel | @pixel-architect (Beacon)

@@ -1,0 +1,237 @@
+-- ============================================================================
+-- SUPABASE SCHEMA - TABELAS PARA FACEBOOK PIXEL
+-- Squad Pixel | @pixel-architect (Beacon)
+-- ============================================================================
+-- IMPORTANTE: Este SQL deve ser executado no Supabase SQL Editor.
+-- Ele cria tabelas para armazenar dados de pixel localmente,
+-- permitindo que voce tenha seus proprios dados de analytics
+-- independente do Facebook.
+-- ============================================================================
+
+
+-- ============================================================================
+-- TABELA 1: pixel_events
+-- Registra todos os eventos disparados pelo pixel
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS public.pixel_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+  -- Dados do evento
+  event_name TEXT NOT NULL,              -- 'PageView', 'ViewContent', etc.
+  event_type TEXT NOT NULL DEFAULT 'standard', -- 'standard' ou 'custom'
+  event_data JSONB DEFAULT '{}',         -- Parametros do evento
+
+  -- Dados da pagina
+  page_url TEXT,                         -- URL completa
+  page_path TEXT,                        -- Apenas o path (ex: /planos)
+  page_title TEXT,                       -- Titulo da pagina
+  referrer TEXT,                         -- De onde veio
+
+  -- Dados do visitante (anonimo)
+  anonymous_id TEXT NOT NULL,            -- ID gerado no browser
+  session_id TEXT,                       -- ID da sessao
+  user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL, -- Null se nao logado
+
+  -- UTM tracking
+  utm_source TEXT,
+  utm_medium TEXT,
+  utm_campaign TEXT,
+  utm_term TEXT,
+  utm_content TEXT,
+
+  -- Dispositivo
+  device_type TEXT,                      -- 'mobile', 'desktop', 'tablet'
+  browser TEXT,                          -- 'Chrome', 'Safari', etc.
+
+  -- Consentimento
+  consent_given BOOLEAN DEFAULT false,   -- Se usuario deu consentimento
+  consent_timestamp TIMESTAMPTZ,         -- Quando deu consentimento
+
+  -- Metadados
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Index para consultas frequentes
+CREATE INDEX IF NOT EXISTS idx_pixel_events_event_name ON public.pixel_events(event_name);
+CREATE INDEX IF NOT EXISTS idx_pixel_events_page_path ON public.pixel_events(page_path);
+CREATE INDEX IF NOT EXISTS idx_pixel_events_anonymous_id ON public.pixel_events(anonymous_id);
+CREATE INDEX IF NOT EXISTS idx_pixel_events_created_at ON public.pixel_events(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pixel_events_user_id ON public.pixel_events(user_id);
+
+-- Comentario na tabela
+COMMENT ON TABLE public.pixel_events IS 'Registro de eventos do Facebook Pixel para analytics proprio';
+
+
+-- ============================================================================
+-- TABELA 2: pixel_sessions
+-- Sessoes de visitantes (anonimas)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS public.pixel_sessions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+  anonymous_id TEXT NOT NULL UNIQUE,
+  first_seen TIMESTAMPTZ DEFAULT NOW(),
+  last_seen TIMESTAMPTZ DEFAULT NOW(),
+
+  -- Metricas da sessao
+  page_views INTEGER DEFAULT 0,
+  events_count INTEGER DEFAULT 0,
+
+  -- Origem
+  first_utm_source TEXT,
+  first_utm_medium TEXT,
+  first_utm_campaign TEXT,
+  first_referrer TEXT,
+
+  -- Dispositivo
+  device_type TEXT,
+  browser TEXT,
+  country TEXT,
+
+  -- Funil
+  saw_pricing BOOLEAN DEFAULT false,
+  clicked_checkout BOOLEAN DEFAULT false,
+  started_signup BOOLEAN DEFAULT false,
+  completed_registration BOOLEAN DEFAULT false,
+  made_purchase BOOLEAN DEFAULT false,
+  contacted_whatsapp BOOLEAN DEFAULT false,
+
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_pixel_sessions_anonymous_id ON public.pixel_sessions(anonymous_id);
+CREATE INDEX IF NOT EXISTS idx_pixel_sessions_first_seen ON public.pixel_sessions(first_seen DESC);
+
+COMMENT ON TABLE public.pixel_sessions IS 'Sessoes de visitantes anonimas para tracking de funil';
+
+
+-- ============================================================================
+-- TABELA 3: pixel_consent_log
+-- Log de consentimentos para auditoria LGPD
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS public.pixel_consent_log (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+  anonymous_id TEXT NOT NULL,
+  user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+
+  consent_type TEXT NOT NULL,           -- 'marketing', 'analytics'
+  consent_given BOOLEAN NOT NULL,        -- true = aceitou, false = recusou
+  consent_version TEXT NOT NULL,         -- Versao da politica
+
+  -- Contexto
+  ip_address TEXT,                       -- Para auditoria
+  user_agent TEXT,
+
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_pixel_consent_created ON public.pixel_consent_log(created_at DESC);
+
+COMMENT ON TABLE public.pixel_consent_log IS 'Log de consentimentos LGPD para auditoria';
+
+
+-- ============================================================================
+-- TABELA 4: pixel_funnel_daily
+-- Metricas diarias do funil (agregadas)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS public.pixel_funnel_daily (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+  date DATE NOT NULL UNIQUE,
+
+  -- Metricas de funil
+  page_views INTEGER DEFAULT 0,
+  unique_visitors INTEGER DEFAULT 0,
+  saw_pricing INTEGER DEFAULT 0,
+  clicked_checkout INTEGER DEFAULT 0,
+  started_signup INTEGER DEFAULT 0,
+  completed_registration INTEGER DEFAULT 0,
+  purchases INTEGER DEFAULT 0,
+  whatsapp_contacts INTEGER DEFAULT 0,
+
+  -- Receita
+  total_revenue DECIMAL(10,2) DEFAULT 0,
+
+  -- Taxas de conversao (calculadas)
+  pricing_to_checkout_rate DECIMAL(5,4) DEFAULT 0,
+  checkout_to_purchase_rate DECIMAL(5,4) DEFAULT 0,
+  visitor_to_purchase_rate DECIMAL(5,4) DEFAULT 0,
+
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_pixel_funnel_date ON public.pixel_funnel_daily(date DESC);
+
+COMMENT ON TABLE public.pixel_funnel_daily IS 'Metricas diarias agregadas do funil de conversao';
+
+
+-- ============================================================================
+-- RLS (Row Level Security)
+-- ============================================================================
+
+-- Habilitar RLS em todas as tabelas
+ALTER TABLE public.pixel_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.pixel_sessions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.pixel_consent_log ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.pixel_funnel_daily ENABLE ROW LEVEL SECURITY;
+
+-- Politica: Service role tem acesso total (para Edge Functions)
+CREATE POLICY "service_role_full_access_events" ON public.pixel_events
+  FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+CREATE POLICY "service_role_full_access_sessions" ON public.pixel_sessions
+  FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+CREATE POLICY "service_role_full_access_consent" ON public.pixel_consent_log
+  FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+CREATE POLICY "service_role_full_access_funnel" ON public.pixel_funnel_daily
+  FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+-- Politica: Anon pode inserir eventos (para tracking client-side)
+CREATE POLICY "anon_insert_events" ON public.pixel_events
+  FOR INSERT TO anon WITH CHECK (true);
+
+-- Politica: Anon pode inserir consentimento
+CREATE POLICY "anon_insert_consent" ON public.pixel_consent_log
+  FOR INSERT TO anon WITH CHECK (true);
+
+-- Politica: Usuarios autenticados veem apenas seus proprios dados
+CREATE POLICY "auth_read_own_events" ON public.pixel_events
+  FOR SELECT TO authenticated USING (user_id = auth.uid());
+
+
+-- ============================================================================
+-- VIEW: Funil resumido (para dashboard admin)
+-- ============================================================================
+CREATE OR REPLACE VIEW public.pixel_funnel_summary AS
+SELECT
+  date,
+  unique_visitors,
+  saw_pricing,
+  clicked_checkout,
+  purchases,
+  total_revenue,
+  CASE WHEN unique_visitors > 0
+    THEN ROUND((saw_pricing::numeric / unique_visitors) * 100, 1)
+    ELSE 0
+  END AS pct_saw_pricing,
+  CASE WHEN saw_pricing > 0
+    THEN ROUND((clicked_checkout::numeric / saw_pricing) * 100, 1)
+    ELSE 0
+  END AS pct_checkout,
+  CASE WHEN clicked_checkout > 0
+    THEN ROUND((purchases::numeric / clicked_checkout) * 100, 1)
+    ELSE 0
+  END AS pct_purchase,
+  CASE WHEN unique_visitors > 0
+    THEN ROUND((purchases::numeric / unique_visitors) * 100, 2)
+    ELSE 0
+  END AS overall_conversion_rate
+FROM public.pixel_funnel_daily
+ORDER BY date DESC;
+
+COMMENT ON VIEW public.pixel_funnel_summary IS 'Resumo do funil com taxas de conversao calculadas';

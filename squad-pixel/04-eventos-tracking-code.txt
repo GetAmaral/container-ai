@@ -1,0 +1,262 @@
+// ============================================================================
+// EVENTOS DE TRACKING - CODIGO DE IMPLEMENTACAO
+// Squad Pixel | @pixel-architect (Beacon)
+// ============================================================================
+// Todos os eventos que devem ser configurados no site.
+// Cada evento inclui: onde colocar, quando dispara, quais dados enviar.
+// ============================================================================
+
+
+// --- ARQUIVO: src/utils/pixelEvents.ts ---
+// Funcoes especificas para cada evento de conversao
+
+import { trackEvent, trackCustomEvent } from "./facebookPixel";
+
+// ============================================================================
+// EVENTOS STANDARD
+// ============================================================================
+
+/**
+ * EVENTO: ViewContent
+ * QUANDO: Usuario ve a secao de pricing ou a pagina /planos
+ * ONDE USAR: PricingSection.tsx (ao montar) e NewPlans.tsx (ao montar)
+ */
+export const trackViewContent = (contentName: string, contentCategory: string) => {
+  trackEvent("ViewContent", {
+    content_name: contentName,
+    content_category: contentCategory,
+    content_type: "product",
+    value: 37.90,
+    currency: "BRL",
+  });
+};
+
+/**
+ * EVENTO: InitiateCheckout
+ * QUANDO: Usuario clica "Garantir Oferta" (antes do redirect Hotmart)
+ * ONDE USAR: PricingSection.tsx → handleSubscribe()
+ */
+export const trackInitiateCheckout = (planType: string) => {
+  trackEvent("InitiateCheckout", {
+    content_name: planType,
+    content_category: "subscription",
+    value: 37.90,
+    currency: "BRL",
+    num_items: 1,
+  });
+};
+
+/**
+ * EVENTO: Lead
+ * QUANDO: Usuario inicia processo de cadastro (envia email/OTP)
+ * ONDE USAR: Account.tsx → ao submeter formulario de signup
+ */
+export const trackLead = (method: string) => {
+  trackEvent("Lead", {
+    content_name: "signup",
+    content_category: method, // "email", "otp", "google"
+    value: 0,
+    currency: "BRL",
+  });
+};
+
+/**
+ * EVENTO: CompleteRegistration
+ * QUANDO: Usuario completa perfil (nome + telefone)
+ * ONDE USAR: CompleteProfile.tsx → handleSubmit() apos sucesso
+ */
+export const trackCompleteRegistration = () => {
+  trackEvent("CompleteRegistration", {
+    content_name: "profile_completed",
+    status: true,
+    value: 0,
+    currency: "BRL",
+  });
+};
+
+/**
+ * EVENTO: Contact
+ * QUANDO: Usuario clica no botao do WhatsApp
+ * ONDE USAR: WhatsAppButton.tsx → handleClick() ANTES do window.open()
+ */
+export const trackContact = (source: string) => {
+  trackEvent("Contact", {
+    content_name: "whatsapp",
+    content_category: source, // "floating_button", "hero", etc.
+  });
+};
+
+/**
+ * EVENTO: Purchase (client-side - complementar ao server-side)
+ * QUANDO: Hotmart webhook confirma pagamento e usuario volta ao site
+ * ONDE USAR: LoginSuccess.tsx ou Dashboard (detectar novo pagamento)
+ * NOTA: O Purchase principal sera via Conversions API (server-side)
+ */
+export const trackPurchase = (
+  planType: string,
+  value: number,
+  transactionId: string
+) => {
+  trackEvent("Purchase", {
+    content_name: planType,
+    content_type: "subscription",
+    value: value,
+    currency: "BRL",
+    content_ids: [planType],
+    transaction_id: transactionId, // Usado para deduplicacao com CAPI
+  });
+};
+
+
+// ============================================================================
+// EVENTOS CUSTOM
+// ============================================================================
+
+/**
+ * EVENTO CUSTOM: ScrollToPrice
+ * QUANDO: Usuario faz scroll ate a secao #pricing na landing page
+ * ONDE USAR: Index.tsx com Intersection Observer
+ */
+export const trackScrollToPrice = () => {
+  trackCustomEvent("ScrollToPrice", {
+    page: window.location.pathname,
+  });
+};
+
+/**
+ * EVENTO CUSTOM: ClickCTA
+ * QUANDO: Usuario clica "Quero um assistente" no Hero
+ * ONDE USAR: HeroSection.tsx → link para /#pricing
+ */
+export const trackClickCTA = (ctaName: string) => {
+  trackCustomEvent("ClickCTA", {
+    cta_name: ctaName,
+    page: window.location.pathname,
+  });
+};
+
+/**
+ * EVENTO CUSTOM: LoginSuccess
+ * QUANDO: Login bem-sucedido
+ * ONDE USAR: LoginSuccess.tsx ao montar
+ */
+export const trackLoginSuccess = (method: string) => {
+  trackCustomEvent("LoginSuccess", {
+    method: method, // "email", "otp", "google"
+  });
+};
+
+/**
+ * EVENTO CUSTOM: DashboardView
+ * QUANDO: Usuario acessa dashboard (engajamento)
+ * ONDE USAR: NewDashboard.tsx ao montar
+ */
+export const trackDashboardView = (tab: string) => {
+  trackCustomEvent("DashboardView", {
+    tab: tab, // "financeiro", "investimentos", "relatorios", "agenda"
+  });
+};
+
+/**
+ * EVENTO CUSTOM: GoogleCalendarConnect
+ * QUANDO: Usuario conecta Google Calendar
+ * ONDE USAR: GoogleCalendarConnection.tsx apos sucesso
+ */
+export const trackGoogleCalendarConnect = () => {
+  trackCustomEvent("GoogleCalendarConnect");
+};
+
+
+// ============================================================================
+// IMPLEMENTACAO NOS COMPONENTES
+// ============================================================================
+
+// ---------- PricingSection.tsx ----------
+// Adicionar ao INICIO da funcao handleSubscribe:
+//
+//   import { trackInitiateCheckout, trackViewContent } from "@/utils/pixelEvents";
+//
+//   // No useEffect (ao montar):
+//   useEffect(() => {
+//     trackViewContent("Premium Anual", "subscription");
+//   }, []);
+//
+//   // No handleSubscribe (ANTES do handleCheckout):
+//   const handleSubscribe = async () => {
+//     trackInitiateCheckout("premium-anual");  // ← ADICIONAR
+//     setLoading(true);
+//     try {
+//       await handleCheckout("premium-anual");
+//     } finally {
+//       setLoading(null);
+//     }
+//   };
+
+
+// ---------- WhatsAppButton.tsx ----------
+// Adicionar import e disparar ANTES do window.open:
+//
+//   import { trackContact } from "@/utils/pixelEvents";
+//
+//   const handleClick = () => {
+//     trackContact("floating_button");  // ← ADICIONAR
+//     window.open("https://wa.me/message/NBWSOI45VG7KL1", "_blank");
+//   };
+
+
+// ---------- HeroSection.tsx ----------
+// No Link "Quero um assistente":
+//
+//   import { trackClickCTA } from "@/utils/pixelEvents";
+//
+//   <Link to="/#pricing" onClick={(e) => {
+//     trackClickCTA("hero_quero_assistente");  // ← ADICIONAR
+//     handleAnchorClick(e, '/#pricing');
+//   }}>
+
+
+// ---------- CompleteProfile.tsx ----------
+// No handleSubmit, APOS sucesso do updateProfile:
+//
+//   import { trackCompleteRegistration } from "@/utils/pixelEvents";
+//
+//   // Apos o toast.success:
+//   trackCompleteRegistration();  // ← ADICIONAR
+
+
+// ---------- Index.tsx (scroll tracking) ----------
+// Adicionar Intersection Observer para #pricing:
+//
+//   import { useEffect, useRef } from "react";
+//   import { trackScrollToPrice } from "@/utils/pixelEvents";
+//
+//   // Dentro do componente Index:
+//   const pricingTracked = useRef(false);
+//
+//   useEffect(() => {
+//     const el = document.getElementById("pricing");
+//     if (!el) return;
+//
+//     const observer = new IntersectionObserver(
+//       ([entry]) => {
+//         if (entry.isIntersecting && !pricingTracked.current) {
+//           trackScrollToPrice();
+//           pricingTracked.current = true;
+//         }
+//       },
+//       { threshold: 0.3 }
+//     );
+//
+//     observer.observe(el);
+//     return () => observer.disconnect();
+//   }, []);
+
+
+// ---------- NewDashboard.tsx ----------
+// Ao montar:
+//
+//   import { trackDashboardView } from "@/utils/pixelEvents";
+//
+//   useEffect(() => {
+//     trackDashboardView(defaultTab || "financeiro");
+//   }, []);

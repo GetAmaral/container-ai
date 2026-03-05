@@ -1,0 +1,199 @@
+// ============================================================================
+// FACEBOOK PIXEL - CODIGO BASE COM FIX SPA
+// Squad Pixel | @pixel-architect (Beacon)
+// Pixel ID: 1584825002799208
+// ============================================================================
+// IMPORTANTE: Este pixel SOMENTE carrega apos consentimento do usuario.
+// Depende do CookieConsentBanner (02-consent-banner-code.txt)
+// ============================================================================
+
+
+// --- ARQUIVO: src/utils/facebookPixel.ts ---
+
+// Tipo global para fbq
+declare global {
+  interface Window {
+    fbq: (...args: any[]) => void;
+    _fbq: (...args: any[]) => void;
+  }
+}
+
+const PIXEL_ID = "1584825002799208";
+
+let pixelInitialized = false;
+
+/**
+ * Carrega o script do Facebook Pixel e inicializa.
+ * So deve ser chamado APOS consentimento do usuario.
+ */
+export const loadFacebookPixel = (): void => {
+  if (pixelInitialized) return;
+  if (typeof window === "undefined") return;
+
+  // Snippet oficial do Meta Pixel (minificado)
+  (function (f: any, b: any, e: any, v: any) {
+    if (f.fbq) return;
+    const n: any = (f.fbq = function () {
+      n.callMethod ? n.callMethod.apply(n, arguments) : n.queue.push(arguments);
+    });
+    if (!f._fbq) f._fbq = n;
+    n.push = n;
+    n.loaded = true;
+    n.version = "2.0";
+    n.queue = [];
+    const t = b.createElement(e) as HTMLScriptElement;
+    t.async = true;
+    t.src = v;
+    const s = b.getElementsByTagName(e)[0];
+    s.parentNode?.insertBefore(t, s);
+  })(
+    window,
+    document,
+    "script",
+    "https://connect.facebook.net/en_US/fbevents.js"
+  );
+
+  // Inicializar pixel SEM advanced matching automatico
+  // (matching manual sera feito via init com dados hasheados)
+  window.fbq("init", PIXEL_ID);
+
+  // Primeiro PageView
+  window.fbq("track", "PageView");
+
+  pixelInitialized = true;
+};
+
+/**
+ * Verifica se o pixel esta carregado.
+ */
+export const isPixelLoaded = (): boolean => pixelInitialized;
+
+/**
+ * Dispara um evento standard do Facebook Pixel.
+ * So dispara se pixel estiver carregado.
+ */
+export const trackEvent = (
+  eventName: string,
+  params?: Record<string, any>
+): void => {
+  if (!pixelInitialized || !window.fbq) return;
+  if (params) {
+    window.fbq("track", eventName, params);
+  } else {
+    window.fbq("track", eventName);
+  }
+};
+
+/**
+ * Dispara um evento custom do Facebook Pixel.
+ */
+export const trackCustomEvent = (
+  eventName: string,
+  params?: Record<string, any>
+): void => {
+  if (!pixelInitialized || !window.fbq) return;
+  if (params) {
+    window.fbq("trackCustom", eventName, params);
+  } else {
+    window.fbq("trackCustom", eventName);
+  }
+};
+
+/**
+ * Dispara PageView (para uso no listener SPA).
+ */
+export const trackPageView = (): void => {
+  if (!pixelInitialized || !window.fbq) return;
+  window.fbq("track", "PageView");
+};
+
+
+// ============================================================================
+// --- ARQUIVO: src/hooks/usePixelInit.ts ---
+// Hook para inicializar o pixel com base no consentimento
+// ============================================================================
+
+import { useEffect } from "react";
+import { useLocation } from "react-router-dom";
+import { loadFacebookPixel, trackPageView, isPixelLoaded } from "@/utils/facebookPixel";
+
+/**
+ * Hook que:
+ * 1. Ouve evento "loadFacebookPixel" do banner de consentimento
+ * 2. Checa consentimento salvo no LocalStorage ao montar
+ * 3. Dispara PageView a cada navegacao (fix SPA)
+ */
+export const usePixelInit = (): void => {
+  const location = useLocation();
+
+  // Listener para consentimento dado pelo banner
+  useEffect(() => {
+    const handleConsent = () => {
+      loadFacebookPixel();
+    };
+
+    // Se ja tem consentimento salvo, carregar pixel
+    try {
+      const stored = localStorage.getItem("total_cookie_consent");
+      if (stored) {
+        const consent = JSON.parse(stored);
+        if (consent.marketing === true) {
+          loadFacebookPixel();
+        }
+      }
+    } catch {
+      // Sem consentimento, nao carrega
+    }
+
+    // Ouvir evento do banner
+    window.addEventListener("loadFacebookPixel", handleConsent);
+    return () => window.removeEventListener("loadFacebookPixel", handleConsent);
+  }, []);
+
+  // Fix SPA: Disparar PageView a cada mudanca de rota
+  useEffect(() => {
+    if (isPixelLoaded()) {
+      trackPageView();
+    }
+  }, [location.pathname]);
+};
+
+
+// ============================================================================
+// --- INTEGRACAO NO App.tsx ---
+// Onde colocar o hook no App
+// ============================================================================
+
+// No App.tsx, criar um componente wrapper que usa o hook:
+
+// import { usePixelInit } from "./hooks/usePixelInit";
+//
+// const PixelInitializer = () => {
+//   usePixelInit();
+//   return null;
+// };
+//
+// Dentro do BrowserRouter (que tem acesso ao useLocation):
+//
+// <BrowserRouter>
+//   <PixelInitializer />        {/* ← ADICIONAR AQUI */}
+//   <ScrollToTop />
+//   <WhatsAppButton />
+//   <CookieConsentBanner />
+//   <Suspense>
+//     <Routes>...</Routes>
+//   </Suspense>
+// </BrowserRouter>
+
+
+// ============================================================================
+// NOSCRIPT FALLBACK
+// Adicionar no index.html, dentro do <body>, APOS o <div id="root">
+// Nota: Este fallback so funciona para usuarios sem JavaScript
+// ============================================================================
+
+// <noscript>
+//   <img height="1" width="1" style="display:none"
+//     src="https://www.facebook.com/tr?id=1584825002799208&ev=PageView&noscript=1"
+//   />
+// </noscript>

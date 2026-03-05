@@ -1,0 +1,210 @@
+================================================================================
+ EVENTOS DE TRACKING - PASSO A PASSO + DIAGNOSTICO
+ Squad Pixel | @pixel-architect (Beacon)
+ Data: 2026-03-05
+================================================================================
+
+## DIAGNOSTICO
+
+### Eventos Escolhidos e Justificativa
+
+  PageView (automatico pelo hook)
+    → Ja implementado pelo usePixelInit (fix SPA)
+    → Dispara a cada mudanca de rota
+
+  ViewContent → Secao de pricing
+    → JUSTIFICATIVA: Saber quantos visitantes viram o preco
+    → Essencial para calcular taxa de conversao do funil
+    → Permite criar publico "viu preco mas nao comprou" (remarketing)
+
+  InitiateCheckout → Clique em "Garantir Oferta"
+    → JUSTIFICATIVA: Saber quantos clicaram para comprar
+    → Diferencial entre "viu preco" e "tentou comprar"
+    → Hotmart abre em nova aba, entao este e o ULTIMO evento client-side
+
+  Lead → Cadastro iniciado
+    → JUSTIFICATIVA: Saber quantos iniciaram o cadastro
+    → Permite criar publico "iniciou mas nao completou"
+
+  CompleteRegistration → Perfil completado
+    → JUSTIFICATIVA: Saber quantos completaram o onboarding
+    → Usuario com perfil completo esta pronto para usar o produto
+
+  Contact → WhatsApp
+    → JUSTIFICATIVA: Medir quantos usam o botao de WhatsApp
+    → Esse e o CTA principal do produto (usar via WhatsApp)
+
+  Purchase → Pagamento confirmado (Conversions API)
+    → JUSTIFICATIVA: A conversao mais importante
+    → Precisa ser server-side (Hotmart webhook)
+    → Ver arquivo 05-conversions-api-code.txt
+
+### Eventos NAO Escolhidos (e por que)
+
+  AddToCart → NAO APLICAVEL
+    → O site tem um unico plano, nao tem carrinho
+
+  Search → NAO PRIORITARIO
+    → Busca de investimentos e feature interna, baixo valor para pixel
+
+  Subscribe → NAO PADRAO
+    → Preferimos Purchase + CompleteRegistration
+
+================================================================================
+
+## PASSO A PASSO DE IMPLEMENTACAO
+
+### Pre-Requisitos
+  [ ] Pixel base implementado (03-pixel-base-code.txt)
+  [ ] Banner de consentimento implementado (02-consent-banner-code.txt)
+
+### Passo 1: Criar modulo de eventos
+  O QUE FAZER: Criar arquivo com todas as funcoes de eventos
+  ONDE: site/src/utils/pixelEvents.ts
+  COMO: Copiar a secao "ARQUIVO: src/utils/pixelEvents.ts" do code
+  VERIFICACAO: Import funciona sem erros TypeScript
+
+### Passo 2: Integrar ViewContent + InitiateCheckout no PricingSection
+  O QUE FAZER: Disparar ViewContent ao ver pricing, InitiateCheckout ao clicar
+  ONDE: site/src/components/PricingSection.tsx
+  COMO:
+    1. Adicionar import no topo:
+       import { trackInitiateCheckout, trackViewContent } from "@/utils/pixelEvents";
+
+    2. Adicionar useEffect para ViewContent:
+       import { useEffect } from "react"; // se nao tiver
+       useEffect(() => {
+         trackViewContent("Premium Anual", "subscription");
+       }, []);
+
+    3. Adicionar no handleSubscribe (PRIMEIRA LINHA):
+       const handleSubscribe = async () => {
+         trackInitiateCheckout("premium-anual");  // ADICIONAR
+         setLoading(true);
+         // ... resto igual
+       };
+
+  VERIFICACAO: Abrir /planos, Pixel Helper deve mostrar ViewContent.
+              Clicar "Garantir Oferta", Pixel Helper deve mostrar InitiateCheckout.
+
+### Passo 3: Integrar Contact no WhatsAppButton
+  O QUE FAZER: Disparar Contact antes de abrir WhatsApp
+  ONDE: site/src/components/WhatsAppButton.tsx
+  COMO:
+    1. Adicionar import:
+       import { trackContact } from "@/utils/pixelEvents";
+
+    2. Modificar handleClick:
+       const handleClick = () => {
+         trackContact("floating_button");  // ADICIONAR
+         window.open("https://wa.me/message/NBWSOI45VG7KL1", "_blank");
+       };
+
+  VERIFICACAO: Clicar no botao WhatsApp, Pixel Helper mostra Contact.
+
+### Passo 4: Integrar ClickCTA no HeroSection
+  O QUE FAZER: Rastrear clique em "Quero um assistente"
+  ONDE: site/src/components/HeroSection.tsx
+  COMO:
+    1. Adicionar import:
+       import { trackClickCTA } from "@/utils/pixelEvents";
+
+    2. Modificar o onClick do Link:
+       <Link to="/#pricing" onClick={(e) => {
+         trackClickCTA("hero_quero_assistente");
+         handleAnchorClick(e, '/#pricing');
+       }}>
+
+  VERIFICACAO: Clicar no CTA do hero, Pixel Helper mostra ClickCTA custom.
+
+### Passo 5: Integrar CompleteRegistration
+  O QUE FAZER: Rastrear conclusao de perfil
+  ONDE: site/src/pages/CompleteProfile.tsx
+  COMO:
+    1. Adicionar import:
+       import { trackCompleteRegistration } from "@/utils/pixelEvents";
+
+    2. No handleSubmit, APOS o toast.success:
+       trackCompleteRegistration();
+
+  VERIFICACAO: Completar perfil e verificar no Events Manager.
+
+### Passo 6: Integrar ScrollToPrice na Landing
+  O QUE FAZER: Detectar quando usuario faz scroll ate #pricing
+  ONDE: site/src/pages/Index.tsx
+  COMO:
+    1. Adicionar imports:
+       import { useEffect, useRef } from "react";
+       import { trackScrollToPrice } from "@/utils/pixelEvents";
+
+    2. No componente Index, ANTES do return:
+       const pricingTracked = useRef(false);
+       useEffect(() => {
+         const el = document.getElementById("pricing");
+         if (!el) return;
+         const observer = new IntersectionObserver(
+           ([entry]) => {
+             if (entry.isIntersecting && !pricingTracked.current) {
+               trackScrollToPrice();
+               pricingTracked.current = true;
+             }
+           },
+           { threshold: 0.3 }
+         );
+         observer.observe(el);
+         return () => observer.disconnect();
+       }, []);
+
+  VERIFICACAO: Scroll ate pricing na landing, Pixel Helper mostra ScrollToPrice.
+
+### Passo 7: Integrar DashboardView
+  O QUE FAZER: Rastrear acesso ao dashboard (engajamento)
+  ONDE: site/src/components/dashboard/NewDashboard.tsx
+  COMO:
+    1. Adicionar import:
+       import { trackDashboardView } from "@/utils/pixelEvents";
+
+    2. Adicionar useEffect:
+       useEffect(() => {
+         trackDashboardView(defaultTab || "financeiro");
+       }, []);
+
+  VERIFICACAO: Acessar /dashboard, Pixel Helper mostra DashboardView.
+
+================================================================================
+
+## MAPA VISUAL DO FUNIL COM EVENTOS
+
+  Visitante chega → PageView (automatico)
+       |
+  Scroll ate pricing → ViewContent + ScrollToPrice (custom)
+       |
+  Clica "Garantir Oferta" → InitiateCheckout
+       |
+  Hotmart (externa) → PERDE RASTREIO CLIENT-SIDE
+       |
+  Webhook Hotmart → Purchase (Conversions API - arquivo 05)
+       |
+  Volta ao site → CompleteRegistration (se novo)
+       |
+  Usa dashboard → DashboardView (engajamento)
+
+  FLUXO PARALELO:
+  Clica WhatsApp → Contact
+
+================================================================================
+
+## VERIFICACAO FINAL
+
+  [ ] ViewContent dispara em /planos e na landing ao ver pricing
+  [ ] InitiateCheckout dispara ao clicar "Garantir Oferta"
+  [ ] Contact dispara ao clicar WhatsApp
+  [ ] CompleteRegistration dispara ao completar perfil
+  [ ] ScrollToPrice dispara ao scroll na landing
+  [ ] ClickCTA dispara ao clicar "Quero um assistente"
+  [ ] DashboardView dispara ao acessar dashboard
+  [ ] Nenhum evento dispara sem consentimento
+  [ ] Todos os eventos aparecem no Meta Events Manager
+
+================================================================================
+Gerado por: Squad Pixel | @pixel-architect (Beacon)

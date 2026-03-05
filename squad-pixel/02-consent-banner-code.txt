@@ -1,0 +1,222 @@
+// ============================================================================
+// BANNER DE CONSENTIMENTO LGPD - CODIGO DE IMPLEMENTACAO
+// Squad Pixel | @pixel-compliance (Shield)
+// ============================================================================
+// Este componente deve ser adicionado ao App.tsx
+// Ele bloqueia o pixel ate o usuario dar consentimento
+// ============================================================================
+
+// --- ARQUIVO: src/components/CookieConsentBanner.tsx ---
+
+import { useState, useEffect, useCallback } from "react";
+import { Button } from "@/components/ui/button";
+import { Shield, X } from "lucide-react";
+import { Link } from "react-router-dom";
+
+// Tipos de consentimento
+interface ConsentState {
+  essential: boolean;   // Sempre true (necessarios)
+  marketing: boolean;   // Facebook Pixel, tracking
+  analytics: boolean;   // Futuro: Google Analytics, etc.
+  timestamp: string;    // Quando consentiu
+  version: string;      // Versao da politica
+}
+
+const CONSENT_KEY = "total_cookie_consent";
+const CONSENT_VERSION = "1.0";
+
+// Funcao global para checar consentimento (usada pelo pixel)
+export const hasMarketingConsent = (): boolean => {
+  try {
+    const stored = localStorage.getItem(CONSENT_KEY);
+    if (!stored) return false;
+    const consent: ConsentState = JSON.parse(stored);
+    return consent.marketing === true && consent.version === CONSENT_VERSION;
+  } catch {
+    return false;
+  }
+};
+
+// Funcao para obter estado completo do consentimento
+export const getConsentState = (): ConsentState | null => {
+  try {
+    const stored = localStorage.getItem(CONSENT_KEY);
+    if (!stored) return null;
+    return JSON.parse(stored);
+  } catch {
+    return null;
+  }
+};
+
+// Evento customizado para quando consentimento muda
+const dispatchConsentEvent = (consent: ConsentState) => {
+  window.dispatchEvent(
+    new CustomEvent("consentChange", { detail: consent })
+  );
+};
+
+export const CookieConsentBanner = () => {
+  const [visible, setVisible] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
+
+  useEffect(() => {
+    // Se nao tem consentimento salvo, mostra banner
+    const consent = getConsentState();
+    if (!consent || consent.version !== CONSENT_VERSION) {
+      // Delay para nao aparecer instantaneamente
+      const timer = setTimeout(() => setVisible(true), 1500);
+      return () => clearTimeout(timer);
+    }
+  }, []);
+
+  const saveConsent = useCallback((marketing: boolean) => {
+    const consent: ConsentState = {
+      essential: true,
+      marketing,
+      analytics: false,
+      timestamp: new Date().toISOString(),
+      version: CONSENT_VERSION,
+    };
+    localStorage.setItem(CONSENT_KEY, JSON.stringify(consent));
+    setVisible(false);
+    dispatchConsentEvent(consent);
+
+    // Se aceitou marketing, inicializar pixel
+    if (marketing) {
+      window.dispatchEvent(new Event("loadFacebookPixel"));
+    }
+  }, []);
+
+  const handleAcceptAll = () => saveConsent(true);
+  const handleRejectMarketing = () => saveConsent(false);
+
+  if (!visible) return null;
+
+  return (
+    <div className="fixed bottom-0 left-0 right-0 z-[9999] p-4 animate-slide-up">
+      <div className="max-w-lg mx-auto bg-white dark:bg-[#1a1a2e] border border-black/10 dark:border-white/10 rounded-2xl shadow-2xl p-6 space-y-4">
+
+        {/* Header */}
+        <div className="flex items-start justify-between">
+          <div className="flex items-center gap-2">
+            <Shield className="w-5 h-5 text-[#00E676]" />
+            <h3 className="font-bold text-sm text-foreground">Sua privacidade</h3>
+          </div>
+          <button
+            onClick={handleRejectMarketing}
+            className="text-muted-foreground hover:text-foreground transition-colors"
+            aria-label="Fechar"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Texto principal */}
+        <p className="text-sm text-muted-foreground leading-relaxed">
+          Usamos cookies essenciais para o funcionamento do site e cookies de
+          marketing para entender como voce usa nosso site e melhorar sua
+          experiencia com anuncios relevantes.
+        </p>
+
+        {/* Detalhes expandiveis */}
+        {showDetails && (
+          <div className="space-y-3 p-3 bg-muted/50 rounded-xl text-xs">
+            <div>
+              <p className="font-semibold text-foreground">Essenciais (sempre ativos)</p>
+              <p className="text-muted-foreground">
+                Autenticacao, seguranca, preferencias de tema. Necessarios para o
+                site funcionar.
+              </p>
+            </div>
+            <div>
+              <p className="font-semibold text-foreground">Marketing (opcional)</p>
+              <p className="text-muted-foreground">
+                Facebook Pixel para medir eficacia de anuncios e personalizar
+                conteudo. Seus dados sao anonimizados.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Links */}
+        <div className="flex items-center gap-4 text-xs">
+          <button
+            onClick={() => setShowDetails(!showDetails)}
+            className="text-[#00E676] font-semibold hover:underline"
+          >
+            {showDetails ? "Ocultar detalhes" : "Ver detalhes"}
+          </button>
+          <Link to="/cookies" className="text-muted-foreground hover:text-foreground">
+            Politica de Cookies
+          </Link>
+          <Link to="/privacy" className="text-muted-foreground hover:text-foreground">
+            Privacidade
+          </Link>
+        </div>
+
+        {/* Botoes */}
+        <div className="flex gap-3">
+          <Button
+            onClick={handleRejectMarketing}
+            variant="outline"
+            className="flex-1 h-11 rounded-xl text-xs font-bold uppercase tracking-wider"
+          >
+            Apenas essenciais
+          </Button>
+          <Button
+            onClick={handleAcceptAll}
+            className="flex-1 h-11 rounded-xl bg-[#00E676] hover:bg-[#00C853] text-white text-xs font-bold uppercase tracking-wider border-none"
+          >
+            Aceitar todos
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// --- CSS para animacao (adicionar em index.css ou App.css) ---
+/*
+@keyframes slide-up {
+  from { transform: translateY(100%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.animate-slide-up {
+  animation: slide-up 0.4s ease-out;
+}
+*/
+
+
+// ============================================================================
+// ARQUIVO: src/utils/consentManager.ts
+// Funcoes utilitarias para gerenciar consentimento em qualquer parte do app
+// ============================================================================
+
+export const consentManager = {
+  hasMarketing: (): boolean => {
+    try {
+      const stored = localStorage.getItem("total_cookie_consent");
+      if (!stored) return false;
+      const consent = JSON.parse(stored);
+      return consent.marketing === true;
+    } catch {
+      return false;
+    }
+  },
+
+  revoke: (): void => {
+    localStorage.removeItem("total_cookie_consent");
+    // Recarregar pagina para desativar pixel
+    window.location.reload();
+  },
+
+  getTimestamp: (): string | null => {
+    try {
+      const stored = localStorage.getItem("total_cookie_consent");
+      if (!stored) return null;
+      return JSON.parse(stored).timestamp;
+    } catch {
+      return null;
+    }
+  }
+};

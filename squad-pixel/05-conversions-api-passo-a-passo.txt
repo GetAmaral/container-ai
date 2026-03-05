@@ -1,0 +1,169 @@
+================================================================================
+ CONVERSIONS API (CAPI) - PASSO A PASSO + DIAGNOSTICO
+ Squad Pixel | @pixel-architect (Beacon)
+ Data: 2026-03-05
+================================================================================
+
+## DIAGNOSTICO
+
+### Por que Conversions API?
+  - O checkout acontece na HOTMART (dominio diferente)
+  - O pixel client-side PERDE rastreio quando o usuario sai do seu site
+  - Voce NAO tem como saber se o usuario comprou pelo pixel client-side
+  - A UNICA forma de rastrear Purchase e via webhook da Hotmart
+
+### Como funciona
+  1. Usuario clica "Garantir Oferta" → InitiateCheckout (client-side)
+  2. Hotmart abre em nova aba → usuario compra la
+  3. Hotmart envia webhook para sua Edge Function → confirma pagamento
+  4. Sua Edge Function envia Purchase para Meta CAPI → Facebook recebe
+  5. Facebook "casa" o Purchase com o InitiateCheckout anterior
+
+### Vantagens da CAPI vs Pixel Client-Side
+  - Funciona independente de cookies e adblockers
+  - Mais preciso (dados vem direto do servidor)
+  - Nao depende do navegador do usuario
+  - Recomendado pela Meta como padrao para 2024+
+  - Melhor matching com perfis do Facebook (dados hasheados)
+
+### Deduplicacao
+  - Se enviar o mesmo evento por client E server, o Facebook deduplica
+  - Usa o campo event_id para identificar
+  - Ambos devem ter o MESMO event_id para funcionar
+
+================================================================================
+
+## PASSO A PASSO DE IMPLEMENTACAO
+
+### Pre-Requisitos
+  [ ] Acesso ao Supabase Dashboard (Edge Functions)
+  [ ] Acesso ao Meta Events Manager (gerar token CAPI)
+  [ ] Webhook da Hotmart ja funcionando (hotmart-webhook Edge Function)
+
+### Passo 1: Gerar Access Token no Meta Events Manager
+  O QUE FAZER: Criar token de acesso para a Conversions API
+  ONDE: https://business.facebook.com/events_manager
+  COMO:
+    1. Acessar Events Manager
+    2. Selecionar o pixel "1584825002799208"
+    3. Ir em "Configuracoes" (icone de engrenagem)
+    4. Rolar ate secao "Conversions API"
+    5. Clicar "Gerar token de acesso"
+    6. COPIAR o token (ele so aparece uma vez!)
+    7. Guardar em local seguro
+
+  VERIFICACAO: Token gerado e copiado
+
+### Passo 2: Configurar token como Secret no Supabase
+  O QUE FAZER: Salvar token como variavel de ambiente segura
+  ONDE: Supabase Dashboard
+  COMO:
+    1. Ir em: Supabase Dashboard > Edge Functions
+    2. Clicar na funcao "hotmart-webhook"
+    3. Ir em "Secrets"
+    4. Adicionar novo secret:
+       Nome: META_CAPI_TOKEN
+       Valor: <seu_token_copiado>
+    5. Salvar
+
+  VERIFICACAO: Secret aparece na lista da Edge Function
+
+### Passo 3: Criar modulo pixel-capi.ts
+  O QUE FAZER: Criar arquivo com funcao de envio para CAPI
+  ONDE: supabase/functions/hotmart-webhook/pixel-capi.ts
+  COMO: Copiar secao "ARQUIVO: pixel-capi.ts" do code
+  IMPORTANTE: Na linha do ACCESS_TOKEN, usar:
+    const ACCESS_TOKEN = Deno.env.get("META_CAPI_TOKEN") || "";
+
+  VERIFICACAO: Arquivo criado sem erros de sintaxe
+
+### Passo 4: Integrar no webhook existente
+  O QUE FAZER: Chamar sendPurchaseEvent apos confirmar pagamento
+  ONDE: supabase/functions/hotmart-webhook/index.ts
+  COMO:
+    1. Adicionar import no topo:
+       import { sendPurchaseEvent } from "./pixel-capi.ts";
+
+    2. Encontrar o trecho que confirma pagamento (PURCHASE_APPROVED)
+    3. APOS a logica de salvar no banco, adicionar:
+
+       const capiResult = await sendPurchaseEvent({
+         email: buyerEmail,
+         phone: buyerPhone || undefined,
+         value: purchaseAmount,
+         currency: "BRL",
+         planType: "premium-anual",
+         transactionId: transactionId,
+       });
+
+       if (capiResult.success) {
+         console.log("Purchase sent to Meta CAPI");
+       }
+
+    IMPORTANTE: Adaptar os nomes das variaveis ao codigo existente.
+    Os campos buyerEmail, buyerPhone, purchaseAmount e transactionId
+    vem do payload do webhook da Hotmart.
+
+  VERIFICACAO: Deploy da Edge Function sem erros
+
+### Passo 5: Testar com Test Events
+  O QUE FAZER: Verificar se eventos CAPI chegam ao Facebook
+  ONDE: Meta Events Manager > Test Events
+  COMO:
+    1. Acessar Events Manager
+    2. Ir em "Test Events" (Testar Eventos)
+    3. Copiar o "Test Event Code" (ex: TEST12345)
+    4. No codigo pixel-capi.ts, TEMPORARIAMENTE adicionar ao body:
+       body: JSON.stringify({
+         data: [event],
+         access_token: ACCESS_TOKEN,
+         test_event_code: "TEST12345",  // ← TEMPORARIO
+       })
+    5. Fazer uma compra teste na Hotmart
+    6. Verificar se Purchase aparece na aba Test Events
+    7. REMOVER test_event_code apos validar
+
+  VERIFICACAO: Evento Purchase aparece em Test Events com dados corretos
+
+### Passo 6: Validar Matching Quality
+  O QUE FAZER: Verificar qualidade do match de usuarios
+  ONDE: Meta Events Manager > Configuracoes > Qualidade do evento
+  COMO:
+    1. Acessar Events Manager > Overview
+    2. Verificar "Event Match Quality" (Qualidade de correspondencia)
+    3. Meta: minimo 6/10 (bom), ideal 8+/10 (excelente)
+    4. Para melhorar: enviar mais dados (email + telefone + IP)
+
+  VERIFICACAO: Score >= 6/10 na qualidade de correspondencia
+
+================================================================================
+
+## SEGURANCA
+
+  [ ] Access Token NUNCA commitado no codigo (usar Secrets)
+  [ ] Email e telefone SEMPRE hasheados com SHA256
+  [ ] Telefone normalizado para E.164 antes de hashear
+  [ ] Dados pessoais nao trafegam em logs
+  [ ] Edge Function so aceita requests da Hotmart (validar)
+
+================================================================================
+
+## RISCOS E MITIGACOES
+
+  Risco: Token CAPI expira ou e revogado
+  Probabilidade: Baixa
+  Impacto: Alto (Purchase para de ser rastreado)
+  Mitigacao: Monitorar Events Manager semanalmente
+
+  Risco: Webhook Hotmart falha
+  Probabilidade: Media
+  Impacto: Alto (pagamento nao rastreado)
+  Mitigacao: Logs na Edge Function, retry automatico da Hotmart
+
+  Risco: Deduplicacao falha
+  Probabilidade: Baixa
+  Impacto: Medio (compra contada 2x)
+  Mitigacao: Usar mesmo event_id (transaction_id) em client e server
+
+================================================================================
+Gerado por: Squad Pixel | @pixel-architect (Beacon)

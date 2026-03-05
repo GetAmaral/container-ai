@@ -1,0 +1,115 @@
+================================================================================
+ FACEBOOK PIXEL BASE - PASSO A PASSO + DIAGNOSTICO
+ Squad Pixel | @pixel-architect (Beacon)
+ Data: 2026-03-05
+================================================================================
+
+## DIAGNOSTICO
+
+### Por que NAO usar o snippet padrao do Facebook?
+  O snippet que o Facebook te deu para colar no <head> tem 3 problemas:
+  1. Carrega ANTES do consentimento (viola LGPD)
+  2. Nao funciona bem com SPA (React Router)
+  3. Nao permite controle programatico de eventos
+
+### Solucao Aplicada
+  - Pixel encapsulado em modulo TypeScript (facebookPixel.ts)
+  - Hook React (usePixelInit.ts) que:
+    → Ouve evento de consentimento do banner
+    → Checa consentimento salvo ao montar
+    → Dispara PageView a cada navegacao (fix SPA)
+  - Pixel so carrega apos consentimento = LGPD compliant
+
+### Por que NAO ativar "Correspondencia Avancada Automatica"?
+  - Scraping automatico de DOM captura dados sem controle
+  - Pode capturar campos sensiveis (senha, tokens)
+  - Solucao: Matching manual com dados hasheados (feito no arquivo 04)
+
+================================================================================
+
+## PASSO A PASSO DE IMPLEMENTACAO
+
+### Pre-Requisitos
+  [ ] Banner de consentimento implementado (02-consent-banner-code.txt)
+  [ ] Pixel ID: 1584825002799208
+
+### Passo 1: Criar modulo do pixel
+  O QUE FAZER: Criar arquivo com funcoes do Facebook Pixel
+  ONDE: site/src/utils/facebookPixel.ts
+  COMO: Copiar a secao "ARQUIVO: src/utils/facebookPixel.ts" do code
+  VERIFICACAO: Nenhum erro TypeScript ao importar
+
+### Passo 2: Criar hook de inicializacao
+  O QUE FAZER: Criar hook que gerencia lifecycle do pixel
+  ONDE: site/src/hooks/usePixelInit.ts
+  COMO: Copiar a secao "ARQUIVO: src/hooks/usePixelInit.ts" do code
+  VERIFICACAO: Hook importa corretamente de facebookPixel
+
+### Passo 3: Integrar no App.tsx
+  O QUE FAZER: Adicionar PixelInitializer ao App
+  ONDE: site/src/App.tsx
+  COMO:
+    1. Adicionar imports no topo:
+       import { usePixelInit } from "./hooks/usePixelInit";
+
+    2. Criar componente inline ANTES do App:
+       const PixelInitializer = () => {
+         usePixelInit();
+         return null;
+       };
+
+    3. Adicionar DENTRO do BrowserRouter:
+       <BrowserRouter>
+         <PixelInitializer />
+         <ScrollToTop />
+         ...
+       </BrowserRouter>
+
+  VERIFICACAO: Abrir console do navegador, nao deve ter erros
+
+### Passo 4: Adicionar noscript fallback no index.html
+  O QUE FAZER: Fallback para navegadores sem JavaScript
+  ONDE: site/index.html
+  COMO: Adicionar ANTES do </body>:
+    <noscript>
+      <img height="1" width="1" style="display:none"
+        src="https://www.facebook.com/tr?id=1584825002799208&ev=PageView&noscript=1"
+      />
+    </noscript>
+  VERIFICACAO: Ver no View Source que a tag existe
+
+### Passo 5: Testar
+  TESTE 1: Sem consentimento
+    - Limpar LocalStorage
+    - Abrir DevTools > Network > filtrar "facebook"
+    - Acessar o site
+    - NENHUMA request para facebook deve aparecer
+    - Banner de consentimento deve aparecer
+
+  TESTE 2: Com consentimento
+    - Clicar "Aceitar todos" no banner
+    - Network deve mostrar request para "fbevents.js"
+    - Network deve mostrar request para "tr?" (PageView)
+    - Facebook Pixel Helper deve mostrar: Pixel 1584825002799208, PageView
+
+  TESTE 3: Navegacao SPA
+    - Apos aceitar, navegar para /planos
+    - Novo PageView deve disparar (ver no Pixel Helper)
+    - Navegar para /conta
+    - Outro PageView deve disparar
+    - Cada rota = 1 PageView
+
+================================================================================
+
+## ARQUIVOS CRIADOS/MODIFICADOS
+
+  CRIAR:
+    site/src/utils/facebookPixel.ts     (modulo do pixel)
+    site/src/hooks/usePixelInit.ts      (hook de inicializacao)
+
+  MODIFICAR:
+    site/src/App.tsx                    (adicionar PixelInitializer)
+    site/index.html                     (adicionar noscript fallback)
+
+================================================================================
+Gerado por: Squad Pixel | @pixel-architect (Beacon)

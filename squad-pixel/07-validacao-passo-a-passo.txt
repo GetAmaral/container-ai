@@ -1,0 +1,216 @@
+================================================================================
+ VALIDACAO COMPLETA - PLANO DE TESTES
+ Squad Pixel | @pixel-qa (Lens)
+ Data: 2026-03-05
+================================================================================
+
+## FERRAMENTAS NECESSARIAS
+
+  1. Facebook Pixel Helper (Chrome Extension)
+     → Chrome Web Store: buscar "Facebook Pixel Helper"
+     → Instalar e ativar
+
+  2. Meta Events Manager
+     → https://business.facebook.com/events_manager
+     → Selecionar pixel 1584825002799208
+
+  3. Chrome DevTools
+     → F12 ou Ctrl+Shift+I
+     → Abas: Network, Console, Application
+
+================================================================================
+
+## TESTE 1: BANNER DE CONSENTIMENTO
+
+  CENARIO 1.1: Primeira visita
+    ACAO: Limpar dados do site (DevTools > Application > Clear site data)
+    ACAO: Acessar o site
+    ESPERADO: Banner aparece apos ~1.5 segundos
+    ESPERADO: Pixel NAO carregado (verificar Network, sem "fbevents")
+    RESULTADO: [ ] PASS  [ ] FAIL
+
+  CENARIO 1.2: Rejeitar cookies
+    ACAO: Clicar "Apenas essenciais" no banner
+    ESPERADO: Banner desaparece
+    ESPERADO: Pixel NAO carrega
+    ESPERADO: LocalStorage tem "total_cookie_consent" com marketing: false
+    ACAO: Recarregar pagina
+    ESPERADO: Banner NAO reaparece
+    ESPERADO: Pixel continua sem carregar
+    RESULTADO: [ ] PASS  [ ] FAIL
+
+  CENARIO 1.3: Aceitar cookies
+    ACAO: Limpar dados do site
+    ACAO: Acessar o site
+    ACAO: Clicar "Aceitar todos"
+    ESPERADO: Banner desaparece
+    ESPERADO: fbevents.js carregado (verificar Network)
+    ESPERADO: PageView disparado (verificar Pixel Helper)
+    ESPERADO: LocalStorage tem "total_cookie_consent" com marketing: true
+    RESULTADO: [ ] PASS  [ ] FAIL
+
+  CENARIO 1.4: Detalhes do banner
+    ACAO: Clicar "Ver detalhes" no banner
+    ESPERADO: Categorias "Essenciais" e "Marketing" visiveis
+    ESPERADO: Links para /cookies e /privacy funcionam
+    RESULTADO: [ ] PASS  [ ] FAIL
+
+================================================================================
+
+## TESTE 2: PIXEL BASE E FIX SPA
+
+  CENARIO 2.1: PageView no load inicial
+    PRE-CONDICAO: Cookies aceitos
+    ACAO: Acessar / (landing page)
+    ESPERADO: Pixel Helper mostra PageView
+    ESPERADO: Network mostra request para "tr?id=1584825002799208&ev=PageView"
+    RESULTADO: [ ] PASS  [ ] FAIL
+
+  CENARIO 2.2: PageView em navegacao SPA
+    ACAO: Navegar para /planos (clicar em link)
+    ESPERADO: NOVO PageView no Pixel Helper
+    ACAO: Navegar para /conta
+    ESPERADO: OUTRO PageView no Pixel Helper
+    ACAO: Voltar para / (botao voltar)
+    ESPERADO: MAIS UM PageView no Pixel Helper
+    RESULTADO: [ ] PASS  [ ] FAIL
+
+  CENARIO 2.3: Noscript fallback
+    ACAO: Ver source code do index.html
+    ESPERADO: Tag <noscript><img> com pixel presente
+    RESULTADO: [ ] PASS  [ ] FAIL
+
+================================================================================
+
+## TESTE 3: EVENTOS DE CONVERSAO
+
+  CENARIO 3.1: ViewContent na pricing
+    ACAO: Acessar /planos
+    ESPERADO: Pixel Helper mostra ViewContent
+    ESPERADO: Parametros: content_name="Premium Anual", value=37.90, currency="BRL"
+    RESULTADO: [ ] PASS  [ ] FAIL
+
+  CENARIO 3.2: ScrollToPrice na landing
+    ACAO: Acessar / (landing page)
+    ACAO: Scroll devagar ate secao de pricing
+    ESPERADO: Pixel Helper mostra evento custom "ScrollToPrice"
+    ACAO: Continuar scrollando
+    ESPERADO: Evento NAO dispara novamente (so uma vez por sessao)
+    RESULTADO: [ ] PASS  [ ] FAIL
+
+  CENARIO 3.3: ClickCTA no hero
+    ACAO: Acessar / (landing page)
+    ACAO: Clicar "Quero um assistente" no hero
+    ESPERADO: Pixel Helper mostra evento custom "ClickCTA"
+    ESPERADO: Scroll suave ate pricing
+    RESULTADO: [ ] PASS  [ ] FAIL
+
+  CENARIO 3.4: InitiateCheckout
+    ACAO: Acessar /planos (ou scroll ate pricing na landing)
+    ACAO: Clicar "Garantir Oferta"
+    ESPERADO: Pixel Helper mostra InitiateCheckout
+    ESPERADO: Parametros: content_name="premium-anual", value=37.90
+    ESPERADO: Hotmart abre em nova aba
+    RESULTADO: [ ] PASS  [ ] FAIL
+
+  CENARIO 3.5: Contact (WhatsApp)
+    ACAO: Clicar no botao flutuante do WhatsApp
+    ESPERADO: Pixel Helper mostra Contact
+    ESPERADO: Parametros: content_name="whatsapp"
+    ESPERADO: WhatsApp abre em nova aba
+    RESULTADO: [ ] PASS  [ ] FAIL
+
+  CENARIO 3.6: CompleteRegistration
+    ACAO: Criar conta nova (ou usar conta sem perfil completo)
+    ACAO: Ir para /completar-perfil
+    ACAO: Preencher nome e telefone
+    ACAO: Submeter formulario
+    ESPERADO: Pixel Helper mostra CompleteRegistration
+    RESULTADO: [ ] PASS  [ ] FAIL
+
+  CENARIO 3.7: DashboardView
+    ACAO: Fazer login e acessar /dashboard
+    ESPERADO: Pixel Helper mostra evento custom "DashboardView"
+    RESULTADO: [ ] PASS  [ ] FAIL
+
+================================================================================
+
+## TESTE 4: CONVERSIONS API (Purchase)
+
+  CENARIO 4.1: Teste com Test Events
+    ACAO: Acessar Events Manager > Test Events
+    ACAO: Copiar Test Event Code
+    ACAO: Adicionar test_event_code temporariamente no pixel-capi.ts
+    ACAO: Fazer compra teste na Hotmart
+    ESPERADO: Evento Purchase aparece em Test Events
+    ESPERADO: Dados corretos (valor, email hasheado, plano)
+    RESULTADO: [ ] PASS  [ ] FAIL
+
+  CENARIO 4.2: Deduplicacao
+    ACAO: Verificar que event_id usa transaction_id
+    ESPERADO: Mesmo purchase nao aparece duplicado no Events Manager
+    RESULTADO: [ ] PASS  [ ] FAIL
+
+================================================================================
+
+## TESTE 5: SUPABASE SCHEMA
+
+  CENARIO 5.1: Tabelas existem
+    ACAO: Acessar Supabase > Table Editor
+    ESPERADO: pixel_events, pixel_sessions, pixel_consent_log, pixel_funnel_daily
+    RESULTADO: [ ] PASS  [ ] FAIL
+
+  CENARIO 5.2: RLS ativo
+    ACAO: Verificar em Authentication > Policies
+    ESPERADO: Policies ativas em todas as tabelas pixel_*
+    RESULTADO: [ ] PASS  [ ] FAIL
+
+  CENARIO 5.3: View funciona
+    ACAO: SQL Editor > SELECT * FROM pixel_funnel_summary
+    ESPERADO: Query executa sem erro
+    RESULTADO: [ ] PASS  [ ] FAIL
+
+================================================================================
+
+## TESTE 6: LGPD COMPLIANCE
+
+  CENARIO 6.1: Sem tracking antes do consentimento
+    ACAO: Limpar todos os dados do site
+    ACAO: Abrir DevTools > Network
+    ACAO: Acessar o site
+    ACAO: Navegar entre paginas SEM aceitar cookies
+    ESPERADO: NENHUMA request para facebook.com em nenhum momento
+    RESULTADO: [ ] PASS  [ ] FAIL
+
+  CENARIO 6.2: Politica de cookies atualizada
+    ACAO: Acessar /cookies
+    ESPERADO: Categoria "Marketing" listada
+    ESPERADO: Meta Pixel mencionado
+    RESULTADO: [ ] PASS  [ ] FAIL
+
+  CENARIO 6.3: Consentimento registrado no banco
+    ACAO: Aceitar cookies
+    ACAO: Verificar tabela pixel_consent_log no Supabase
+    ESPERADO: Registro com consent_given=true, consent_type="marketing"
+    RESULTADO: [ ] PASS  [ ] FAIL
+
+================================================================================
+
+## CHECKLIST FINAL
+
+  [ ] Banner funciona (aparece, aceita, rejeita, persiste)
+  [ ] Pixel so carrega apos consentimento
+  [ ] PageView dispara em CADA navegacao (fix SPA)
+  [ ] ViewContent dispara em /planos e landing
+  [ ] InitiateCheckout dispara ao clicar comprar
+  [ ] Contact dispara ao clicar WhatsApp
+  [ ] CompleteRegistration dispara ao completar perfil
+  [ ] ScrollToPrice dispara ao scroll
+  [ ] Purchase via CAPI funciona (teste com Hotmart)
+  [ ] Nenhum dado PII exposto em texto puro
+  [ ] Tabelas Supabase criadas com RLS
+  [ ] Politica de cookies atualizada
+  [ ] Events Manager recebe todos os eventos
+
+================================================================================
+Gerado por: Squad Pixel | @pixel-qa (Lens)
