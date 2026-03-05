@@ -1,4 +1,4 @@
-# Fix Main Workflow — Filtro de Status + Análise de Tempo
+# Fix Main Workflow — Filtro de Status + Typing Indicator + Paralelização
 
 ## 1. FLUXO ATUAL (caminho premium, ~1.216ms)
 
@@ -61,83 +61,134 @@ False → No Operation (parar — é status webhook)
 
 ---
 
-## 3. ANÁLISE: COMO REDUZIR 1 SEGUNDO
+## 3. FIX 2: SUBSTITUIR "Processando..." POR TYPING INDICATOR (~490ms economia)
 
-### Opção A: Paralelizar Send message + Get a row (~589ms economia)
+### Problema
+O node `Send message` ("🔄 Processando...") leva ~587ms — é o maior gargalo da Main (48%).
 
-Atualmente tudo é **sequencial**. Mas `Send message` e `Get a row` não dependem um do outro:
+### Solução
+Substituir por um **HTTP Request** que envia o **typing indicator** nativo do WhatsApp ("digitando...").
+Tempo estimado: ~50-100ms (vs 587ms).
 
-- `Send message` precisa de: `contacts[0].wa_id` (do trigger)
-- `Get a row` precisa de: `messages[0].from` (do trigger)
+### Node: "Typing Indicator" (HTTP Request)
 
-Se rodarmos em paralelo:
+**Configuração no N8N:**
+- **Nome:** `Typing Indicator`
+- **Method:** POST
+- **URL:** `https://graph.facebook.com/v23.0/744582292082931/messages`
+- **Authentication:** Generic Credential Type → Header Auth
+- **Credential:** `WhatsApp Header Auth` (id: `TDDrQvr1s0RxXTTC` — já existe no workflow)
+- **Headers:**
+  - `Content-Type`: `application/json`
+- **Send Body:** Yes
+- **Content Type:** JSON
+- **JSON Body:**
+
+```json
+{
+  "messaging_product": "whatsapp",
+  "status": "read",
+  "message_id": "{{ $('trigger-whatsapp').item.json.messages[0].id }}",
+  "typing_indicator": {
+    "type": "text"
+  }
+}
+```
+
+### O que acontece:
+1. Marca a mensagem do usuário como **lida** (tiques azuis ✓✓)
+2. Mostra **"digitando..."** nativo do WhatsApp
+3. O indicador dura até **25 segundos** ou até a resposta final chegar
+
+### Como implementar:
+1. **Desativar ou remover** o node `Send message` ("🔄 Processando...")
+2. **Adicionar** um novo HTTP Request node no lugar dele
+3. Configurar conforme acima
+4. Conectar no mesmo lugar: `Edit Fields` → `Typing Indicator` → `If`
+
+### Comparação:
+| | Antes (Send message) | Depois (Typing Indicator) |
+|---|---|---|
+| Tempo | ~587ms | ~50-100ms |
+| Feedback visual | Mensagem "🔄 Processando..." | "digitando..." nativo |
+| Marca como lido | Não | Sim (tiques azuis) |
+| Duração | Permanente | Até 25s ou até resposta |
+| **Economia** | — | **~490ms** |
+
+### Nota (março 2026):
+Feature em **Public Beta** da Meta. Se o endpoint retornar erro, reativar o Send message antigo.
+
+---
+
+## 4. FIX 3: PARALELIZAR TYPING + GET A ROW (~490ms economia total)
+
+### Situação com Typing Indicator
+Com o Typing Indicator (~100ms) substituindo o Send message (~587ms), o fluxo fica:
 
 ```
-                              ┌→ Send message (587ms) ───────────┐
-trigger → Filtro → Edit Fields│                                   │→ (fim)
-                              └→ Get a row (263ms) → If8 → If9  │
-                                 → setar_user → If2             │
-                                 → Premium User (359ms) ────────┘
+trigger → Filtro Status → Edit Fields → Typing Indicator (~100ms) → If → If3 → Get a row (263ms) → ... → Premium User (359ms)
+Total: ~100 + 263 + 359 = ~722ms
 ```
 
-Tempos:
-- Branch A (Send message): 587ms
-- Branch B (Get a row → Premium User): 263 + 5 + 359 = 627ms
-- Total: max(587, 627) = **~627ms**
-- **Economia: ~589ms (de 1216ms para 627ms)**
+### Paralelização opcional
+Rodar Typing Indicator em paralelo com o restante do fluxo:
 
-**Como implementar:**
-1. Após `Edit Fields`, criar 2 caminhos:
-   - Caminho 1: `Edit Fields` → `Send message` (e para aqui)
-   - Caminho 2: `Edit Fields` → `Get a row` → `If8` → `If9` → `setar_user` → `If2` → `Premium User`
-2. Remover a conexão `Send message` → `If`
-3. Adicionar conexão `Edit Fields` → `Get a row` (direta)
-4. O `If` ("Resuma para mim") e `If3` (áudio encaminhado) devem ficar no caminho 2, antes de `Get a row`
-
-**Fluxo reestruturado:**
 ```
 trigger → Filtro Status → Edit Fields → [2 saídas]
-  Saída 1: Send message (dispara e para)
+  Saída 1: Typing Indicator (dispara e para)
   Saída 2: If → If3 → Get a row → If8 → If9 → setar_user → If2 → Premium User
 ```
 
-### Opção B: Mover "Processando..." para o Fix Conflito v2 (~587ms economia)
+Tempos:
+- Branch A (Typing Indicator): ~100ms
+- Branch B (Get a row → Premium User): 263 + 5 + 359 = ~627ms
+- Total: max(100, 627) = **~627ms**
+- **Economia adicional: ~95ms** (de 722ms para 627ms)
 
-Remover `Send message` da Main e colocar como primeiro passo do Fix Conflito v2 (via Evolution API que já existe lá).
+Como o Typing Indicator já é rápido, a paralelização ganha pouco a mais. O grande ganho já veio da substituição do Send message.
 
-**Prós:** Main cai para ~629ms. Simples.
-**Contras:** O "Processando..." chega ~300ms mais tarde ao usuário (pois precisa passar pela Main → webhook → Fix Conflito primeiro).
+---
 
-### Opção C: Trocar Supabase por Redis para lookup de perfil (~200ms economia)
+## 5. OPÇÕES ADICIONAIS
+
+### Opção C: Cache Redis para lookup de perfil (~200ms economia)
 
 Cachear o perfil do usuário em Redis (key: `profile:{phone}`, TTL: 1h). A primeira consulta vai ao Supabase, as seguintes vão ao Redis (~10ms vs 263ms).
 
 **Prós:** Supabase cai de 263ms para ~10ms.
 **Contras:** Precisa criar lógica de cache + invalidação.
 
-### Recomendação
+---
 
-| Opção | Economia | Dificuldade | Recomendo? |
-|-------|----------|-------------|------------|
-| **Fix 1: Filtro Status** | Elimina 89% erros | Fácil | ✅ SIM (urgente) |
-| **Opção A: Paralelizar** | ~589ms | Média | ✅ SIM (maior ganho) |
-| Opção B: Mover Processando | ~587ms | Fácil | Alternativa se A for difícil |
-| Opção C: Cache Redis | ~200ms | Média | Opcional (futuro) |
+## 6. RESUMO DE TODAS AS OTIMIZAÇÕES
 
-Com Fix 1 + Opção A: **Main cai de ~1.216ms para ~627ms** (economia de ~589ms ≈ 0.6s)
+| Fix | O que faz | Economia | Dificuldade |
+|-----|-----------|----------|-------------|
+| **Fix 1: Filtro Status** | Filtra webhooks de status | Elimina 89% erros | Fácil |
+| **Fix 2: Typing Indicator** | Substitui Send message por typing nativo | ~490ms | Fácil |
+| **Fix 3: Paralelizar** | Typing em paralelo com fluxo | ~95ms adicional | Média |
+| Opção C: Cache Redis | Cache de perfil | ~200ms | Média |
+
+### Projeção com Fix 1 + Fix 2:
+- Main: de ~1.216ms para **~722ms** (economia de ~494ms)
+
+### Projeção com Fix 1 + Fix 2 + Fix 3:
+- Main: de ~1.216ms para **~627ms** (economia de ~589ms)
+
+### Projeção com TUDO (Fix 1-3 + Cache Redis):
+- Main: de ~1.216ms para **~430ms** (economia de ~786ms)
 
 ---
 
-## 4. PROJEÇÃO E2E COM TODAS AS OTIMIZAÇÕES
+## 7. PROJEÇÃO E2E COM TODAS AS OTIMIZAÇÕES
 
-| Componente | Antes | Depois |
-|------------|-------|--------|
-| Main | 1.216ms | 627ms |
-| Fix Conflito v2 (prompts comprimidos) | 10.700ms (P50) | ~6.000ms (P50 estimado) |
-| **Total E2E** | **~11.9s** | **~6.6s** |
+| Componente | Antes | Depois (Fix 1+2) | Depois (tudo) |
+|------------|-------|-------------------|---------------|
+| Main | 1.216ms | 722ms | 430ms |
+| Fix Conflito v2 (prompts comprimidos) | 10.700ms (P50) | ~6.000ms | ~6.000ms |
+| **Total E2E** | **~11.9s** | **~6.7s** | **~6.4s** |
 
-Com todas as otimizações juntas (Main paralela + prompts comprimidos):
-**P50 estimado: ~6.5-7s**
+**P50 estimado com Fix 1+2 + prompts comprimidos: ~6.5-7s**
 
 ---
 
