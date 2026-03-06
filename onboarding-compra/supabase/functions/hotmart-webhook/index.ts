@@ -19,9 +19,9 @@ interface HotmartBuyer {
 }
 
 interface HotmartPurchase {
-  order_id: string;
+  transaction: string;
   status: string;
-  price?: { value?: number; currency_code?: string };
+  price?: { value?: number; currency_value?: string };
 }
 
 interface HotmartProduct {
@@ -75,8 +75,10 @@ function isActionable(event: string): event is ActionableEvent {
 // --- Normalização de Telefone ---
 // Regra: DDI "55" + número. Se 13 dígitos e o 5º é "9", remove (9º dígito extra).
 // Resultado: 12 dígitos (padrão WhatsApp BR). Ex: 554391936205
+// Nota: Hotmart manda checkout_phone_code como DDD (ex: "43"), não DDI.
+//       O phone já inclui o DDD, então sempre usamos DDI "55".
 function normalizePhone(
-  phoneCode: string | null | undefined,
+  _phoneCode: string | null | undefined,
   phone: string | null | undefined,
 ): string | null {
   if (!phone) return null;
@@ -85,8 +87,8 @@ function normalizePhone(
   const cleanPhone = phone.replace(/\D/g, "");
   if (!cleanPhone) return null;
 
-  // Monta: DDI + número
-  const ddi = phoneCode?.replace(/\D/g, "") || "55";
+  // Hotmart manda checkout_phone_code como DDD (não DDI), então sempre usamos "55"
+  const ddi = "55";
   let full = `${ddi}${cleanPhone}`;
 
   // Se BR (55) e ficou 13 dígitos, e o 5º dígito é "9" → remove o 9 extra
@@ -131,8 +133,8 @@ function validatePayload(body: unknown): { ok: true; payload: HotmartPayload } |
     return { ok: false, error: "Missing: data" };
   }
   const purchase = data.purchase as Record<string, unknown> | undefined;
-  if (!purchase?.order_id) {
-    return { ok: false, error: "Missing: data.purchase.order_id" };
+  if (!purchase?.transaction) {
+    return { ok: false, error: "Missing: data.purchase.transaction" };
   }
   const buyer = data.buyer as Record<string, unknown> | undefined;
   if (!buyer?.email) {
@@ -154,7 +156,7 @@ async function logWebhook(
   const { error } = await db.from("webhook_events_log").insert({
     request_id: crypto.randomUUID(),
     event_type: event,
-    order_id: data.purchase.order_id,
+    order_id: data.purchase.transaction,
     product_name: data.product?.name ?? null,
     customer_phone: normalizePhone(data.buyer?.checkout_phone_code, data.buyer?.checkout_phone),
     customer_email: data.buyer.email,
@@ -228,10 +230,10 @@ async function handlePurchaseApproved(
     phone: phone,
     plan_type: "standard",
     amount: purchase.price?.value ?? 0,
-    currency: purchase.price?.currency_code ?? "BRL",
+    currency: purchase.price?.currency_value ?? "BRL",
     status: "paid",
     plan_status: "active",
-    transaction_id: purchase.order_id,
+    transaction_id: purchase.transaction,
   });
 
   if (paymentErr) {
@@ -243,12 +245,12 @@ async function handlePurchaseApproved(
 
   const nextStep = phone ? "SEND_WHATSAPP" : "SEND_EMAIL";
   console.log(
-    `[1.2] User saved: ${email} | phone: ${phone ?? "SEM"} | next: ${nextStep} | order: ${purchase.order_id}`,
+    `[1.2] User saved: ${email} | phone: ${phone ?? "SEM"} | next: ${nextStep} | order: ${purchase.transaction}`,
   );
 
   return {
     action: "activate",
-    orderId: purchase.order_id,
+    orderId: purchase.transaction,
     profileId: profile.id,
     email,
     phone,
@@ -264,9 +266,9 @@ async function handleDeactivation(
   payload: HotmartPayload,
   reason: "refund" | "chargeback",
 ) {
-  const orderId = payload.data.purchase.order_id;
+  const orderId = payload.data.purchase.transaction;
 
-  // Buscar payment por transaction_id (order_id)
+  // Buscar payment por transaction_id
   const { data: payment } = await db
     .from("payments")
     .select("id, user_id, status")
@@ -331,7 +333,7 @@ Deno.serve(async (req: Request) => {
   }
 
   const { payload } = validation;
-  const orderId = payload.data.purchase.order_id;
+  const orderId = payload.data.purchase.transaction;
   const event = payload.event;
 
   // Validar hottok
