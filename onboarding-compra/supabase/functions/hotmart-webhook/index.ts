@@ -32,7 +32,7 @@ interface HotmartProduct {
 interface HotmartPayload {
   event: string;
   version: string;
-  hottok: string;
+  hottok?: string;
   data: {
     buyer: HotmartBuyer;
     purchase: HotmartPurchase;
@@ -110,13 +110,15 @@ function normalizePhone(
 
 // --- Validações ---
 
-function validateHottok(payload: HotmartPayload): boolean {
+function validateHottok(payload: HotmartPayload, req: Request): boolean {
   const expected = Deno.env.get("HOTMART_HOTTOK");
   if (!expected) {
     console.error("[webhook] HOTMART_HOTTOK env var not set");
     return false;
   }
-  return payload.hottok === expected;
+  // Hotmart pode mandar hottok no body ou no header "X-Hotmart-Hottok"
+  const hottok = payload.hottok ?? req.headers.get("x-hotmart-hottok");
+  return hottok === expected;
 }
 
 function validatePayload(body: unknown): { ok: true; payload: HotmartPayload } | { ok: false; error: string } {
@@ -337,20 +339,22 @@ Deno.serve(async (req: Request) => {
   const event = payload.event;
 
   // Validar hottok
-  if (!validateHottok(payload)) {
+  if (!validateHottok(payload, req)) {
     console.warn(`[webhook] Invalid hottok | order: ${orderId}`);
     // Loga com signature_valid = false
     const db = supabase();
-    await db.from("webhook_events_log").insert({
-      request_id: crypto.randomUUID(),
-      event_type: event,
-      order_id: orderId,
-      customer_email: payload.data.buyer.email,
-      signature_valid: false,
-      processing_status: "error",
-      error_message: "Invalid hottok",
-      payload: payload as unknown as Record<string, unknown>,
-    }).catch(() => {});
+    try {
+      await db.from("webhook_events_log").insert({
+        request_id: crypto.randomUUID(),
+        event_type: event,
+        order_id: orderId,
+        customer_email: payload.data.buyer.email,
+        signature_valid: false,
+        processing_status: "error",
+        error_message: "Invalid hottok",
+        payload: payload as unknown as Record<string, unknown>,
+      });
+    } catch { /* ignore log errors */ }
     return json({ error: "Unauthorized" }, 401);
   }
 
@@ -434,13 +438,14 @@ Deno.serve(async (req: Request) => {
     console.error(`[webhook] Error: ${msg} | ${event} | order: ${orderId}`);
 
     // Atualiza log com erro
-    await db
-      .from("webhook_events_log")
-      .update({ processing_status: "error", error_message: msg })
-      .eq("order_id", orderId)
-      .eq("event_type", event)
-      .eq("processing_status", "success")
-      .catch(() => {});
+    try {
+      await db
+        .from("webhook_events_log")
+        .update({ processing_status: "error", error_message: msg })
+        .eq("order_id", orderId)
+        .eq("event_type", event)
+        .eq("processing_status", "success");
+    } catch { /* ignore log errors */ }
 
     // Retorna 200 mesmo com erro → evita Hotmart reenviar 5x
     return json({ status: "error", message: msg });
