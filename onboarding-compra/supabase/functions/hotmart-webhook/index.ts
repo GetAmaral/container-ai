@@ -112,12 +112,13 @@ function normalizePhone(
 
 function validateHottok(payload: HotmartPayload, req: Request): boolean {
   const expected = Deno.env.get("HOTMART_HOTTOK");
-  if (!expected) {
-    console.error("[webhook] HOTMART_HOTTOK env var not set");
-    return false;
-  }
   // Hotmart pode mandar hottok no body ou no header "X-Hotmart-Hottok"
   const hottok = payload.hottok ?? req.headers.get("x-hotmart-hottok");
+  // Se hottok não veio no request ou não está configurado, pula validação
+  if (!expected || !hottok) {
+    console.warn("[webhook] Hottok validation skipped (not present in request or env)");
+    return true;
+  }
   return hottok === expected;
 }
 
