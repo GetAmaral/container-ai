@@ -1,15 +1,15 @@
-# Fix: Onboarding — Criar User + Anti-Loop
+# Fix: Onboarding — Segurança + Anti-Loop
 
-## Problema Diagnosticado (Execução #154826 — 09/03/2026 00:04 UTC)
+## Problemas Diagnosticados (Execução #154826 — 09/03/2026 00:04 UTC)
 
-### Erro 1: HTTP Request4 — Loop Infinito
-O node `HTTP Request4` (criar user via Admin API) conectava de volta ao
-`HTTP Request1` (enviar OTP). Se o OTP falhasse, tentava criar user de novo,
-criando um **loop infinito**.
+### CRÍTICO: Conta vinculada SEM verificar código
+O fluxo original criava a conta e vinculava email→phone ANTES de verificar
+o código OTP. Qualquer pessoa podia digitar qualquer email, dizer "Sim",
+e ter aquele email vinculado ao seu WhatsApp sem provar ser dona do email.
 
-### Erro 2: Headers incompletos no HTTP Request4
-O node não enviava `Content-Type: application/json` nem `apikey` —
-a Admin API rejeitava a requisição.
+### Erro 2: HTTP Request4 — Loop Infinito
+HTTP Request4 (criar user) conectava de volta ao HTTP Request1 (enviar OTP).
+Se OTP falhasse → tentava criar user de novo → loop infinito.
 
 ### Erro 3: service_role_key exposto no n8n
 A key estava nos headers do workflow JSON, acessível a qualquer editor.
@@ -19,59 +19,97 @@ A key estava nos headers do workflow JSON, acessível a qualquer editor.
 
 ---
 
-## Solução: Edge Function `create-onboarding-user`
+## Solução: 2 Edge Functions (verificação ANTES da vinculação)
 
-Uma única Edge Function que faz tudo em uma chamada:
-1. Verifica se user já existe
-2. Se não existe → cria via Admin API (service_role fica dentro do Supabase)
-3. Envia OTP para o email
-4. Retorna resultado completo
+### Function 1: `create-onboarding-user` (renomear para send-onboarding-otp)
+- Recebe: `{ email }`
+- Verifica se user existe. Se não → cria user TEMPORÁRIO (sem phone, sem profile)
+- Envia OTP para o email
+- NÃO vincula nada. NÃO cria profile. NÃO toca em subscriptions.
 
-### Benefícios
-- **Anti-loop:** Uma chamada = um resultado. Sem re-tentativas circulares.
-- **Segurança:** service_role_key nunca sai do Supabase.
-- **Simplicidade:** n8n só precisa de 1 node HTTP Request com anon key.
+### Function 2: `verify-and-create-user` (NOVA)
+- Recebe: `{ email, otp_code, phone, name }`
+- Verifica o código OTP contra Supabase Auth
+- Código INVÁLIDO → rejeita, retorna `{ verified: false }`
+- Código VÁLIDO → SÓ AGORA:
+  - Atualiza user_metadata com phone + name
+  - Upsert no profile vinculando phone
+  - Vincula subscriptions existentes
+  - Retorna `{ verified: true, userId }`
 
 ---
 
-## Como aplicar no n8n
-
-### Substituir: HTTP Request1 + HTTP Request4 → 1 único node
-
-**Remover:**
-- Node `HTTP Request1` (OTP direto)
-- Node `HTTP Request4` (criar user)
-- A conexão circular entre eles
-
-**Adicionar:** Um único node HTTP Request:
+## Fluxo Corrigido no n8n (com novo stg=5)
 
 ```
-Name: "Create User + Send OTP"
+trigger-whatsapp
+  → Get a row3 (busca phone em phones_whatsapp)
+    → Switch (verifica stg)
+
+      → stg=2 → Template "Seu email é X. Está correto? Sim/Não"
+        → Update a row1 (stg→3, salva email temporário)
+        → Create a row3 (log)
+
+      → stg=3 → Switch1 (Sim/Não)
+        → Sim → [Send Onboarding OTP] (só envia código, NÃO cria conta)
+          → sucesso → Update stg→4 → Send message "digite o código"
+          → erro    → Send message erro → FIM
+        → Não → Send message "digite email correto"
+          → Update stg→2
+
+      → stg=4 → [Verify and Create User] (verifica código + vincula)
+        → verified: true  → Update stg→5 → Send message "Conta ativada!"
+        → verified: false → Send message "Código inválido, tente novamente"
+          (mantém stg=4, user pode tentar de novo)
+```
+
+---
+
+## Nodes no n8n
+
+### Node: "Send Onboarding OTP" (substitui HTTP Request1 + HTTP Request4)
+
+```
 Method: POST
 URL: https://ldbdtakddxznfridsarn.supabase.co/functions/v1/create-onboarding-user
-
 Headers:
   apikey: <SUPABASE_ANON_KEY>
   Content-Type: application/json
-
-Body (JSON):
+Body:
 {
-  "email": "{{ $('Get a row3').item.json.email }}",
-  "phone": "{{ $('trigger-whatsapp').item.json.contacts[0].wa_id }}",
-  "name": "{{ $('Get a row3').item.json.name || '' }}"
+  "email": "{{ $('Get a row3').item.json.email }}"
 }
-
 On Error: continueErrorOutput
 ```
 
-**Conexões:**
-- `Update a row4` (stg→4) → **Create User + Send OTP**
-  - Sucesso (`$json.otpSent === true`) → `Send message6` (pede código)
-  - Erro → mensagem de erro para o usuário (sem loop!)
+Conexão: Switch (stg=3) → Switch1 "Sim" → **Send Onboarding OTP**
+  - Sucesso → Update stg→4 → Send message6 ("digite o código")
+  - Erro → Send message erro
+
+### Node: "Verify and Create User" (NOVO)
+
+```
+Method: POST
+URL: https://ldbdtakddxznfridsarn.supabase.co/functions/v1/verify-and-create-user
+Headers:
+  apikey: <SUPABASE_ANON_KEY>
+  Content-Type: application/json
+Body:
+{
+  "email": "{{ $('Get a row3').item.json.email }}",
+  "otp_code": "{{ $('Edit Fields').item.json.messageSet }}",
+  "phone": "{{ $('trigger-whatsapp').item.json.contacts[0].wa_id }}",
+  "name": "{{ $('Get a row3').item.json.name || '' }}"
+}
+On Error: continueErrorOutput
+```
+
+Conexão: Switch (stg=4) → **Verify and Create User**
+  - `$json.verified === true` → Update stg→5 → Send message "Conta ativada!"
+  - `$json.verified === false` → Send message "Código inválido ou expirado"
 
 ### Corrigir: Create a row3
 
-Trocar nos campos `ai_message` e `user_message`:
 ```
 DE:  {{ $('trigger-whatsappsdadsa').item.json.body[0].messages[0].text.body }}
 PARA: {{ $('trigger-whatsapp').item.json.messages[0].text.body }}
@@ -79,30 +117,30 @@ PARA: {{ $('trigger-whatsapp').item.json.messages[0].text.body }}
 
 ---
 
-## Fluxo Corrigido (Completo)
-
-```
-trigger-whatsapp
-  → Get a row3 (busca phone)
-    → Switch (verifica stg)
-      → stg=2 → Template confirmação email → Update a row1 (stg→3) → Create a row3 (log)
-      → stg=3 → Switch1 (Sim/Não)
-        → Sim → Update a row4 (stg→4) → [Create User + Send OTP]
-          → sucesso → Send message6 ("digite o código") → Create a row6 (log)
-          → erro   → Send message erro → FIM (sem loop!)
-        → Não → Send message7 ("digite email correto") → Update a row3 (stg→2) → Create a row7 (log)
-```
-
----
-
-## Deploy da Edge Function
+## Deploy
 
 ```bash
-cd /home/totalAssistente/site
+# 1. Rodar migration (criar RPC get_user_id_by_email)
+# Via Supabase Dashboard > SQL Editor, rodar o conteúdo de:
+# migrations/003_get_user_id_by_email.sql
+
+# 2. Deploy das edge functions
 supabase functions deploy create-onboarding-user --project-ref ldbdtakddxznfridsarn
+supabase functions deploy verify-and-create-user --project-ref ldbdtakddxznfridsarn
 ```
 
 Variáveis de ambiente necessárias (já configuradas no Supabase):
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `SUPABASE_ANON_KEY`
+
+---
+
+## Segurança Garantida
+
+| Antes | Depois |
+|-------|--------|
+| Conta criada quando user diz "Sim" | Conta vinculada SÓ após código válido |
+| service_role_key no n8n | service_role_key só dentro do Supabase |
+| Loop infinito entre nodes | Uma chamada = um resultado |
+| Phone vinculado sem prova de email | Phone vinculado só com OTP verificado |

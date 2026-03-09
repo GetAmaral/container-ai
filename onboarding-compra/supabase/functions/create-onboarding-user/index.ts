@@ -8,15 +8,15 @@ const corsHeaders = {
 };
 
 /**
- * create-onboarding-user
+ * send-onboarding-otp (antigo create-onboarding-user)
  *
- * Chamada pelo n8n durante o onboarding via WhatsApp.
- * 1. Cria o auth user (se não existir) com email_confirm: true
- * 2. Envia OTP para o email do user
- * 3. Retorna o resultado em uma única chamada (anti-loop)
+ * APENAS envia OTP para o email. NÃO cria conta.
+ * Se o user já existir no auth → envia OTP normalmente.
+ * Se o user NÃO existir → cria um user TEMPORÁRIO só pra poder enviar OTP,
+ *   mas NÃO vincula phone nem ativa nada.
  *
- * Segurança: service_role_key fica APENAS dentro do Supabase,
- * n8n chama via anon key + apikey header (sem expor service_role).
+ * A conta só é vinculada/ativada na verify-and-create-user,
+ * DEPOIS que o código for validado.
  */
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -30,7 +30,7 @@ serve(async (req) => {
     });
 
   try {
-    const { email, phone, name } = await req.json();
+    const { email } = await req.json();
 
     if (!email) {
       return json({ error: "Email é obrigatório" }, 400);
@@ -50,104 +50,58 @@ serve(async (req) => {
     const supabaseAdmin = createClient(supabaseUrl, serviceKey, {
       auth: { autoRefreshToken: false, persistSession: false },
     });
-
     const authClient = createClient(supabaseUrl, anonKey);
 
-    // ── Step 1: Verificar se user já existe (query direta em auth.users) ──
-    let userId: string | null = null;
-    let userCreated = false;
-
-    const { data: existingUser } = await supabaseAdmin
+    // ── Verificar se user já existe ──
+    const { data: existingUserId } = await supabaseAdmin
       .rpc("get_user_id_by_email", { p_email: trimmedEmail });
 
-    if (existingUser) {
-      // User já existe — apenas prosseguir para OTP
-      userId = existingUser;
-      console.log("[create-onboarding-user] User já existe:", userId);
-    } else {
-      // ── Step 2: Criar user via Admin API ──
-      const tempPassword =
-        crypto.randomUUID().slice(0, 16) + "A1!"; // Senha temporária segura
+    let userExists = !!existingUserId;
 
-      const { data: userData, error: createError } =
+    if (!userExists) {
+      // Criar user TEMPORÁRIO só pra viabilizar o envio do OTP
+      // Sem phone, sem profile, sem subscription — isso vem DEPOIS da verificação
+      const tempPassword = crypto.randomUUID().slice(0, 16) + "A1!";
+
+      const { error: createError } =
         await supabaseAdmin.auth.admin.createUser({
           email: trimmedEmail,
           password: tempPassword,
           email_confirm: true,
           user_metadata: {
-            name: name || null,
-            phone: phone || null,
-            onboarding_source: "whatsapp",
+            onboarding_status: "pending_verification",
           },
         });
 
       if (createError) {
-        console.error("[create-onboarding-user] Erro ao criar:", createError);
-        return json({ error: createError.message }, 400);
-      }
-
-      userId = userData.user?.id ?? null;
-      userCreated = true;
-      console.log("[create-onboarding-user] User criado:", userId);
-
-      // ── Step 3: Upsert profile ──
-      if (userId) {
-        const { error: profileError } = await supabaseAdmin
-          .from("profiles")
-          .upsert({
-            id: userId,
-            email: trimmedEmail,
-            name: name || null,
-            phone: phone || null,
-          });
-
-        if (profileError) {
-          console.error(
-            "[create-onboarding-user] Erro no profile:",
-            profileError
-          );
+        // Se "already registered" (race condition), tudo bem — segue pro OTP
+        if (!createError.message?.includes("already been registered")) {
+          console.error("[send-onboarding-otp] Erro ao criar temp user:", createError);
+          return json({ error: createError.message }, 400);
         }
-
-        // Vincular subscriptions existentes
-        await supabaseAdmin
-          .from("subscriptions")
-          .update({ user_id: userId })
-          .ilike("email", trimmedEmail);
       }
+
+      userExists = true;
     }
 
-    // ── Step 4: Enviar OTP ──
+    // ── Enviar OTP ──
     const { error: otpError } = await authClient.auth.signInWithOtp({
       email: trimmedEmail,
-      options: {
-        shouldCreateUser: false,
-      },
+      options: { shouldCreateUser: false },
     });
 
     if (otpError) {
-      console.error("[create-onboarding-user] Erro OTP:", otpError);
-      return json(
-        {
-          success: false,
-          userCreated,
-          userId,
-          otpSent: false,
-          error: "Usuário criado mas falha ao enviar OTP: " + otpError.message,
-        },
-        500
-      );
+      console.error("[send-onboarding-otp] Erro OTP:", otpError);
+      return json({ error: "Falha ao enviar código: " + otpError.message }, 500);
     }
 
-    // ── Sucesso completo ──
     return json({
       success: true,
-      userCreated,
-      userId,
       otpSent: true,
       email: trimmedEmail,
     });
   } catch (error: any) {
-    console.error("[create-onboarding-user] Erro:", error);
+    console.error("[send-onboarding-otp] Erro:", error);
     return json({ error: error.message || "Erro interno" }, 500);
   }
 });
