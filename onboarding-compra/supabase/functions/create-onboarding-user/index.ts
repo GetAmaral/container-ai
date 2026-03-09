@@ -53,20 +53,16 @@ serve(async (req) => {
 
     const authClient = createClient(supabaseUrl, anonKey);
 
-    // ── Step 1: Verificar se user já existe via Admin API ──
+    // ── Step 1: Verificar se user já existe (query direta em auth.users) ──
     let userId: string | null = null;
     let userCreated = false;
 
-    // Buscar por email na lista de users (Admin API)
-    const { data: listData } =
-      await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 });
-    const existingUser = listData?.users?.find(
-      (u) => u.email?.toLowerCase() === trimmedEmail
-    );
+    const { data: existingUser } = await supabaseAdmin
+      .rpc("get_user_id_by_email", { p_email: trimmedEmail });
 
     if (existingUser) {
       // User já existe — apenas prosseguir para OTP
-      userId = existingUser.id;
+      userId = existingUser;
       console.log("[create-onboarding-user] User já existe:", userId);
     } else {
       // ── Step 2: Criar user via Admin API ──
