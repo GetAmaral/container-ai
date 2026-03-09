@@ -82,7 +82,7 @@ serve(async (req) => {
 
     // Atualizar metadata do user com phone e name
     const { error: updateError } =
-      await supabaseAdmin.auth.admin.updateUser(userId, {
+      await supabaseAdmin.auth.admin.updateUserById(userId, {
         user_metadata: {
           name: name || null,
           phone: phone || null,
