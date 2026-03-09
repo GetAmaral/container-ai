@@ -1,0 +1,302 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://ldbdtakddxznfridsarn.supabase.co/functions/v1/create-onboarding-user",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "COLE_SEU_ANON_KEY_AQUI"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer COLE_SEU_ANON_KEY_AQUI"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ email: $('Get a row3').item.json.email }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [1200, 864],
+      "id": "f0a00001-0001-0001-0001-000000000001",
+      "name": "Send Onboarding OTP",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "phones_whatsapp",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "phone",
+              "condition": "eq",
+              "keyValue": "={{ $('trigger-whatsapp').item.json.contacts[0].wa_id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "stg",
+              "fieldValue": "4"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1420, 800],
+      "id": "f0a00001-0001-0001-0001-000000000002",
+      "name": "Update stg to 4",
+      "credentials": {
+        "supabaseApi": {
+          "id": "kQkN5PrZm2GihQfS",
+          "name": "Total Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "744582292082931",
+        "recipientPhoneNumber": "=+{{ $('trigger-whatsapp').item.json.contacts[0].wa_id }}",
+        "textBody": "Enviamos um código de verificação para o seu email. Digite-o aqui para confirmar sua conta.\n\n_Se quiser corrigir o email, digite \"corrigir\"_",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [1640, 800],
+      "id": "f0a00001-0001-0001-0001-000000000003",
+      "name": "Msg Código Enviado",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "j0RGyMFfqZfWpCBu",
+          "name": "WhatsApp account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "744582292082931",
+        "recipientPhoneNumber": "=+{{ $('trigger-whatsapp').item.json.contacts[0].wa_id }}",
+        "textBody": "Não foi possível enviar o código agora. Tente novamente em alguns segundos.",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [1420, 928],
+      "id": "f0a00001-0001-0001-0001-000000000004",
+      "name": "Msg Erro Envio OTP",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "j0RGyMFfqZfWpCBu",
+          "name": "WhatsApp account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://ldbdtakddxznfridsarn.supabase.co/functions/v1/verify-and-create-user",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "COLE_SEU_ANON_KEY_AQUI"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer COLE_SEU_ANON_KEY_AQUI"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ email: $('Get a row3').item.json.email, otp_code: $('Edit Fields').item.json.messageSet.trim(), phone: $('trigger-whatsapp').item.json.contacts[0].wa_id, name: $('Get a row3').item.json.name || '' }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [1000, 1150],
+      "id": "f0a00001-0001-0001-0001-000000000005",
+      "name": "Verify OTP Code",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "phones_whatsapp",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "phone",
+              "condition": "eq",
+              "keyValue": "={{ $('trigger-whatsapp').item.json.contacts[0].wa_id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "stg",
+              "fieldValue": "5"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1220, 1088],
+      "id": "f0a00001-0001-0001-0001-000000000006",
+      "name": "Update stg to 5",
+      "credentials": {
+        "supabaseApi": {
+          "id": "kQkN5PrZm2GihQfS",
+          "name": "Total Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "744582292082931",
+        "recipientPhoneNumber": "=+{{ $('trigger-whatsapp').item.json.contacts[0].wa_id }}",
+        "textBody": "Conta verificada e ativada com sucesso! 🎉\n\nSeu email foi confirmado e vinculado ao seu WhatsApp. Agora você já pode usar o Total Assistente normalmente.",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [1440, 1088],
+      "id": "f0a00001-0001-0001-0001-000000000007",
+      "name": "Msg Conta Ativada",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "j0RGyMFfqZfWpCBu",
+          "name": "WhatsApp account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "744582292082931",
+        "recipientPhoneNumber": "=+{{ $('trigger-whatsapp').item.json.contacts[0].wa_id }}",
+        "textBody": "Código inválido ou expirado. Tente novamente.\n\n_Se precisar de um novo código, digite \"reenviar\"_",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [1220, 1216],
+      "id": "f0a00001-0001-0001-0001-000000000008",
+      "name": "Msg Código Inválido",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "j0RGyMFfqZfWpCBu",
+          "name": "WhatsApp account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "744582292082931",
+        "recipientPhoneNumber": "=+{{ $('trigger-whatsapp').item.json.contacts[0].wa_id }}",
+        "textBody": "Sua conta já está verificada e ativa! Como posso te ajudar?",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [1000, 1400],
+      "id": "f0a00001-0001-0001-0001-000000000009",
+      "name": "Msg Conta Já Ativa",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "j0RGyMFfqZfWpCBu",
+          "name": "WhatsApp account 2"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Send Onboarding OTP": {
+      "main": [
+        [
+          {
+            "node": "Update stg to 4",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Msg Erro Envio OTP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update stg to 4": {
+      "main": [
+        [
+          {
+            "node": "Msg Código Enviado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify OTP Code": {
+      "main": [
+        [
+          {
+            "node": "Update stg to 5",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Msg Código Inválido",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update stg to 5": {
+      "main": [
+        [
+          {
+            "node": "Msg Conta Ativada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}
