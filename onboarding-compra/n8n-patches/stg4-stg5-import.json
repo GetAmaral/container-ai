@@ -72,7 +72,7 @@
         "operation": "send",
         "phoneNumberId": "744582292082931",
         "recipientPhoneNumber": "=+{{ $('trigger-whatsapp').item.json.contacts[0].wa_id }}",
-        "textBody": "Enviamos um código de verificação para o seu email. Digite-o aqui para confirmar sua conta.\n\n_Se quiser corrigir o email, digite \"corrigir\"_",
+        "textBody": "Enviamos um código de verificação para o seu email. Digite-o aqui para confirmar sua conta.\n\n_Se quiser corrigir o email, digite \"corrigir\"_\n_Se o código expirou, digite \"reenviar\"_",
         "additionalFields": {}
       },
       "type": "n8n-nodes-base.whatsApp",
@@ -109,6 +109,177 @@
     },
     {
       "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Edit Fields').item.json.messageSet.trim().toLowerCase() }}",
+                    "rightValue": "reenviar",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "stg4-reenviar"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Reenviar"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Edit Fields').item.json.messageSet.trim().toLowerCase() }}",
+                    "rightValue": "corrigir",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "stg4-corrigir"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Corrigir"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [1000, 1150],
+      "id": "f0a00001-0001-0001-0001-000000000010",
+      "name": "Switch stg4"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://ldbdtakddxznfridsarn.supabase.co/functions/v1/create-onboarding-user",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "COLE_SEU_ANON_KEY_AQUI"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer COLE_SEU_ANON_KEY_AQUI"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ email: $('Get a row3').item.json.email }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [1220, 1020],
+      "id": "f0a00001-0001-0001-0001-000000000011",
+      "name": "Reenviar OTP",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "744582292082931",
+        "recipientPhoneNumber": "=+{{ $('trigger-whatsapp').item.json.contacts[0].wa_id }}",
+        "textBody": "Novo código enviado para o seu email! Digite-o aqui.",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [1440, 1020],
+      "id": "f0a00001-0001-0001-0001-000000000012",
+      "name": "Msg Código Reenviado",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "j0RGyMFfqZfWpCBu",
+          "name": "WhatsApp account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "phones_whatsapp",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "phone",
+              "condition": "eq",
+              "keyValue": "={{ $('trigger-whatsapp').item.json.contacts[0].wa_id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "stg",
+              "fieldValue": "2"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1220, 1150],
+      "id": "f0a00001-0001-0001-0001-000000000013",
+      "name": "Corrigir volta stg 2",
+      "credentials": {
+        "supabaseApi": {
+          "id": "kQkN5PrZm2GihQfS",
+          "name": "Total Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "744582292082931",
+        "recipientPhoneNumber": "=+{{ $('trigger-whatsapp').item.json.contacts[0].wa_id }}",
+        "textBody": "Ok! Digite o email correto.",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [1440, 1150],
+      "id": "f0a00001-0001-0001-0001-000000000014",
+      "name": "Msg Corrigir Email",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "j0RGyMFfqZfWpCBu",
+          "name": "WhatsApp account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
         "method": "POST",
         "url": "https://ldbdtakddxznfridsarn.supabase.co/functions/v1/verify-and-create-user",
         "sendHeaders": true,
@@ -135,7 +306,7 @@
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
-      "position": [1000, 1150],
+      "position": [1220, 1280],
       "id": "f0a00001-0001-0001-0001-000000000005",
       "name": "Verify OTP Code",
       "onError": "continueErrorOutput"
@@ -164,7 +335,7 @@
       },
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
-      "position": [1220, 1088],
+      "position": [1440, 1220],
       "id": "f0a00001-0001-0001-0001-000000000006",
       "name": "Update stg to 5",
       "credentials": {
@@ -184,7 +355,7 @@
       },
       "type": "n8n-nodes-base.whatsApp",
       "typeVersion": 1,
-      "position": [1440, 1088],
+      "position": [1660, 1220],
       "id": "f0a00001-0001-0001-0001-000000000007",
       "name": "Msg Conta Ativada",
       "credentials": {
@@ -199,12 +370,12 @@
         "operation": "send",
         "phoneNumberId": "744582292082931",
         "recipientPhoneNumber": "=+{{ $('trigger-whatsapp').item.json.contacts[0].wa_id }}",
-        "textBody": "Código inválido ou expirado. Tente novamente.\n\n_Se precisar de um novo código, digite \"reenviar\"_",
+        "textBody": "Código inválido ou expirado. Tente novamente.\n\n_Se precisar de um novo código, digite \"reenviar\"_\n_Se quiser corrigir o email, digite \"corrigir\"_",
         "additionalFields": {}
       },
       "type": "n8n-nodes-base.whatsApp",
       "typeVersion": 1,
-      "position": [1220, 1216],
+      "position": [1440, 1340],
       "id": "f0a00001-0001-0001-0001-000000000008",
       "name": "Msg Código Inválido",
       "credentials": {
@@ -224,7 +395,7 @@
       },
       "type": "n8n-nodes-base.whatsApp",
       "typeVersion": 1,
-      "position": [1000, 1400],
+      "position": [1000, 1500],
       "id": "f0a00001-0001-0001-0001-000000000009",
       "name": "Msg Conta Já Ativa",
       "credentials": {
@@ -259,6 +430,53 @@
         [
           {
             "node": "Msg Código Enviado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch stg4": {
+      "main": [
+        [
+          {
+            "node": "Reenviar OTP",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Corrigir volta stg 2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Verify OTP Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reenviar OTP": {
+      "main": [
+        [
+          {
+            "node": "Msg Código Reenviado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Corrigir volta stg 2": {
+      "main": [
+        [
+          {
+            "node": "Msg Corrigir Email",
             "type": "main",
             "index": 0
           }
