@@ -1,7 +1,7 @@
 version: "3.8"
 services:
   n8n-dev:
-    image: n8nio/n8n:latest
+    image: n8nio/n8n:2.11.2
     container_name: n8n-dev
     restart: unless-stopped
     ports:
@@ -18,7 +18,8 @@ services:
       - DB_POSTGRESDB_PORT=5432
       - DB_POSTGRESDB_DATABASE=n8n
       - DB_POSTGRESDB_USER=n8n
-      - DB_POSTGRESDB_PASSWORD=N8nDev2026!
+      - DB_POSTGRESDB_PASSWORD=4V3l#m2302_
+      - N8N_SECURE_COOKIE=false
     volumes:
       - n8n_dev_data:/home/node/.n8n
     depends_on:
@@ -30,7 +31,7 @@ services:
     environment:
       - POSTGRES_DB=n8n
       - POSTGRES_USER=n8n
-      - POSTGRES_PASSWORD=N8nDev2026!
+      - POSTGRES_PASSWORD=4V3l#m2302_
     volumes:
       - postgres_dev_data:/var/lib/postgresql/data
 volumes:
