@@ -1,0 +1,38 @@
+version: "3.8"
+services:
+  n8n-dev:
+    image: n8nio/n8n:latest
+    container_name: n8n-dev
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_HOST=0.0.0.0
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://76.13.172.17:5678/
+      - GENERIC_TIMEZONE=America/Sao_Paulo
+      - TZ=America/Sao_Paulo
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres-dev
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=n8n
+      - DB_POSTGRESDB_USER=n8n
+      - DB_POSTGRESDB_PASSWORD=N8nDev2026!
+    volumes:
+      - n8n_dev_data:/home/node/.n8n
+    depends_on:
+      - postgres-dev
+  postgres-dev:
+    image: postgres:16-alpine
+    container_name: postgres-n8n-dev
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=n8n
+      - POSTGRES_USER=n8n
+      - POSTGRES_PASSWORD=N8nDev2026!
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+volumes:
+  n8n_dev_data:
+  postgres_dev_data:
